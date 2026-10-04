@@ -1,0 +1,61 @@
+# Build output and release staging
+/target/
+/dist/
+/release-artifacts/
+*.exe
+*.dll
+*.pdb
+*.lib
+*.obj
+
+# Downloaded model weights and local model configuration
+/models/
+*.onnx
+*.safetensors
+*.pt
+*.pth
+*.part
+
+# Local diagnostics, agent memory, editor settings, and historical work notes
+/.dbg/
+/.workbuddy/
+/.zed/
+/.vscode/
+/.idea/
+/AGENTS.md
+/DEVELOPMENT.md
+/drawing/DEVELOPMENT.md
+/blackboard/DEVELOPMENT.md
+/LICENSE_REVIEW.md
+/debug-ink-white-lag.md
+/渲染排查进度.txt
+*.log
+*.ndjson
+
+# Credentials and machine-local configuration
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+
+# User documents, recovery files, local databases, and exports
+*.neoboard
+/recovery/
+/exports/
+*.sqlite
+*.sqlite3
+*.db
+
+# Python and OS caches
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.bak

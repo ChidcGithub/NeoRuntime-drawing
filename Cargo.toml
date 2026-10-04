@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/board-core",
+    "crates/board-ink",
+    "crates/board-math",
+    "crates/board-hwr",
+    "crates/board-protocol",
+    "crates/board-render",
+    "crates/board-session",
+    "crates/board-app",
+    "drawing",
+    "blackboard",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+eframe = "0.36.1"
+egui = "0.36.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

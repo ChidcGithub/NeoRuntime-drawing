@@ -1,0 +1,14 @@
+[package]
+name = "board-hwr"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+board-core = { path = "../board-core" }
+serde.workspace = true
+serde_json.workspace = true
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries", "copy-dylibs"] }
+tokenizers = { version = "=0.21.4", default-features = false, features = ["fancy-regex"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+tiny-skia = "0.11"

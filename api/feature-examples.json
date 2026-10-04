@@ -1,0 +1,86 @@
+[
+  {
+    "version": 1,
+    "type": "request",
+    "id": "neo:configure-agent",
+    "method": "configure",
+    "params": {
+      "classroom_safe": true,
+      "desktop_capture_allowed": false,
+      "agent_allowed": true
+    }
+  },
+  {
+    "version": 1,
+    "type": "request",
+    "id": "neo:state-before-agent",
+    "method": "get_state",
+    "params": {}
+  },
+  {
+    "version": 1,
+    "type": "request",
+    "id": "neo:ask",
+    "method": "agent.request",
+    "params": {
+      "document_id": "<document_id-from-get_state>",
+      "page_id": "<page_id-from-get_state>",
+      "expected_revision": 0,
+      "user_authorized": true,
+      "prompt": "请解释一元二次方程的求根公式，不写回板书。",
+      "asset_refs": [],
+      "write_back": false
+    }
+  },
+  {
+    "version": 1,
+    "type": "response",
+    "id": "neo:ask",
+    "ok": true,
+    "result": { "job_id": "<local-job-id>", "status": "pending" }
+  },
+  {
+    "version": 1,
+    "type": "request",
+    "id": "runtime:<agent-request-id>",
+    "method": "host.ask_agent",
+    "params": {
+      "document_id": "<document_id-from-get_state>",
+      "page_id": "<page_id-from-get_state>",
+      "revision": 0,
+      "user_authorized": true,
+      "job_id": "<local-job-id>",
+      "prompt": "请解释一元二次方程的求根公式，不写回板书。",
+      "asset_refs": [],
+      "write_back": false
+    }
+  },
+  {
+    "version": 1,
+    "type": "response",
+    "id": "runtime:<agent-request-id>",
+    "ok": true,
+    "result": { "job_id": "<host-job-id>" }
+  },
+  {
+    "version": 1,
+    "type": "event",
+    "event": "job.finished",
+    "data": {
+      "job_id": "<host-job-id>",
+      "request_id": "runtime:<agent-request-id>",
+      "ok": false,
+      "error": { "code": "cancelled", "message": "用户取消任务" }
+    }
+  },
+  {
+    "version": 1,
+    "type": "event",
+    "event": "job.finished",
+    "data": {
+      "job_id": "<local-job-id>",
+      "ok": false,
+      "error": { "code": "cancelled", "message": "用户取消任务" }
+    }
+  }
+]

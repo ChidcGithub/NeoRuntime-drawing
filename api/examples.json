@@ -1,0 +1,91 @@
+[
+  {
+    "version": 1,
+    "type": "request",
+    "id": "neo:configure",
+    "method": "configure",
+    "params": {
+      "classroom_safe": true,
+      "desktop_capture_allowed": false,
+      "agent_allowed": false
+    }
+  },
+  {
+    "version": 1,
+    "type": "request",
+    "id": "neo:state",
+    "method": "get_state",
+    "params": {}
+  },
+  {
+    "version": 1,
+    "type": "request",
+    "id": "neo:add-text",
+    "method": "objects.apply",
+    "params": {
+      "document_id": "<document_id-from-get_state>",
+      "page_id": "<page_id-from-get_state>",
+      "expected_revision": 0,
+      "operations": [
+        {
+          "op": "add",
+          "object": {
+            "id": "example-text-1",
+            "kind": {
+              "type": "text",
+              "position": { "x": 80, "y": 80 },
+              "text": "板书示例",
+              "size": 26,
+              "color": { "r": 245, "g": 245, "b": 235, "a": 255 }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "version": 1,
+    "type": "request",
+    "id": "neo:list-objects",
+    "method": "objects.list",
+    "params": {
+      "document_id": "<document_id-from-get_state>",
+      "page_id": "<page_id-from-get_state>",
+      "expected_revision": 1,
+      "offset": 0,
+      "limit": 100,
+      "max_bytes": 61440
+    }
+  },
+  {
+    "version": 1,
+    "type": "request",
+    "id": "neo:calculate",
+    "method": "math.calculate",
+    "params": { "expression": "2+3*4" }
+  },
+  {
+    "version": 1,
+    "type": "response",
+    "id": "neo:calculate",
+    "ok": true,
+    "result": { "result": "14" }
+  },
+  {
+    "version": 1,
+    "type": "request",
+    "id": "neo:close-dirty",
+    "method": "close",
+    "params": {}
+  },
+  {
+    "version": 1,
+    "type": "response",
+    "id": "neo:close-dirty",
+    "ok": false,
+    "error": {
+      "code": "unsaved_changes",
+      "message": "有未保存内容；先保存或显式 discard_unsaved=true"
+    }
+  }
+]

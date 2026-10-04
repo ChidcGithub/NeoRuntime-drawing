@@ -1,0 +1,13 @@
+[package]
+name = "board-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+board-core = { path = "../board-core" }
+board-protocol = { path = "../board-protocol" }
+board-math = { path = "../board-math" }
+serde.workspace = true
+serde_json.workspace = true
+png = "0.17"

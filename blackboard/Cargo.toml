@@ -1,0 +1,11 @@
+[package]
+name = "neo-blackboard"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+board-app = { path = "../crates/board-app" }
+
+[dev-dependencies]
+serde_json.workspace = true
