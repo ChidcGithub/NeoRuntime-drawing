@@ -124,4 +124,18 @@ Ignored model, GPU, and performance tests require explicit execution. The last r
 
 ## License
 
-Project-owned workspace packages are licensed under [Apache-2.0](LICENSE). Third-party dependencies, fonts, runtimes, and models retain their own licenses. This source-only prerelease does not bundle those dependencies and does not certify their redistribution requirements as complete. Binary/model distribution is deferred pending third-party license, attribution, and runtime review.
+Project-owned workspace packages are licensed under [Apache-2.0](LICENSE). Third-party dependencies, fonts, runtimes, and models retain their own licenses. This source-only prerelease does not bundle those dependencies and does not certify their redistribution requirements as complete. Binary/model distribution is deferred pending third-party license, attribution, and runtime review. See the [release procedure](RELEASING.md#4-requirements-for-any-future-binary-or-model-distribution) for distribution requirements.
+
+## Acknowledgements
+
+This project builds on the work of the following open-source projects and their contributors:
+
+- [egui / eframe](https://github.com/emilk/egui) for the user interface and desktop framework, and [winit](https://github.com/rust-windowing/winit) for window integration.
+- [wgpu](https://github.com/gfx-rs/wgpu) and [glow](https://github.com/grovesNL/glow) for graphics backends.
+- [Serde](https://github.com/serde-rs/serde) and [serde_json](https://github.com/serde-rs/json) for serialization.
+- [tiny-skia](https://github.com/linebender/tiny-skia), [image](https://github.com/image-rs/image), and [png](https://github.com/image-rs/image-png) for image processing and export.
+- [ort](https://github.com/pykeio/ort), [ONNX Runtime](https://github.com/microsoft/onnxruntime), and [tokenizers](https://github.com/huggingface/tokenizers) for local neural inference and tokenization.
+- [TexTeller](https://github.com/OleehyO/TexTeller) for the optional handwriting-recognition model integration.
+- The Hack, Noto Emoji, Ubuntu, and emoji-icon-font contributors whose fonts are included by egui's default-font configuration when building the applications.
+
+These acknowledgements do not imply sponsorship or endorsement. Each upstream component retains its own license; acknowledgements do not replace required copyright, license, or NOTICE materials. The complete locked dependency resolution is recorded in `Cargo.lock`.
