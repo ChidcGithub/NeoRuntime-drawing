@@ -61,3 +61,6 @@ Thumbs.db
 Desktop.ini
 *.tmp
 *.bak
+
+# API documentation stays local
+/api/
