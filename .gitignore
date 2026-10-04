@@ -2,6 +2,7 @@
 /target/
 /dist/
 /release-artifacts/
+/.ci-reports/
 *.exe
 *.dll
 *.pdb

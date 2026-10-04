@@ -2,10 +2,8 @@
 use board_core::StrokePoint;
 use image::{GrayImage, imageops};
 use ort::{
-    execution_providers::CPUExecutionProvider,
     session::{
         Session,
-        builder::GraphOptimizationLevel,
         run_options::{OutputSelector, RunOptions},
     },
     tensor::TensorElementType,
@@ -15,7 +13,7 @@ use serde_json::Value;
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Mutex, MutexGuard, TryLockError},
     time::{Duration, Instant},
 };
 use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke, Transform};
@@ -26,8 +24,19 @@ const MEAN: f32 = 0.9545467;
 const STD: f32 = 0.15394445;
 const MAX_TOKENS: usize = 256;
 const TIME_BUDGET: Duration = Duration::from_secs(60);
-// 所有实例共用一个非排队推理槽；超时只在 ORT 调用之间检查，不强杀调用。
+mod options;
+pub use options::NeuralOptions;
+
+// 同一库实例内的所有 recognizer 共用非排队加载/推理槽；不限制驻留模型总量。
+// 不同进程或分别静态链接本库的动态库不共享此槽。
 static INFERENCE_SLOT: Mutex<()> = Mutex::new(());
+
+fn try_neural_slot() -> Result<MutexGuard<'static, ()>, String> {
+    INFERENCE_SLOT.try_lock().map_err(|err| match err {
+        TryLockError::WouldBlock => "神经加载/识别槽正在使用 (busy)，请等待当前任务完成".into(),
+        TryLockError::Poisoned(_) => "神经加载/识别槽因先前 panic 不可用，请重启进程".into(),
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct NeuralFormula {
@@ -82,6 +91,7 @@ pub struct NeuralRecognizer {
     start_id: i64,
     eos_id: i64,
     vocab_size: usize,
+    options: NeuralOptions,
 }
 
 fn error(e: impl std::fmt::Display) -> String {
@@ -89,7 +99,19 @@ fn error(e: impl std::fmt::Display) -> String {
 }
 
 impl NeuralRecognizer {
+    /// Uses the low-memory resource policy; does not imply quantized weights or
+    /// a proven RAM ceiling. No model download, conversion or directory fallback.
     pub fn load(model_dir: &Path) -> Result<Self, String> {
+        Self::load_with_options(model_dir, NeuralOptions::default())
+    }
+
+    /// FP32 and separately converted weights use the same filenames and checked
+    /// external tensor signature. Cached/merged decoder signatures are rejected.
+    /// Loading and inference across recognizers fail busy rather than queue.
+    /// Multiple resident recognizers are allowed, but their weights are not shared.
+    pub fn load_with_options(model_dir: &Path, options: NeuralOptions) -> Result<Self, String> {
+        options.validate()?;
+        let _slot = try_neural_slot()?;
         let model_dir = model_dir
             .canonicalize()
             .map_err(|e| format!("模型目录不可用：{e}"))?;
@@ -127,22 +149,8 @@ impl NeuralRecognizer {
         if start_id < 0 || start_id as usize >= vocab_size {
             return Err("decoder_start_token_id 越界".into());
         }
-        let make_session = |name: &str| -> Result<Session, String> {
-            Session::builder()
-                .map_err(error)?
-                .with_execution_providers([CPUExecutionProvider::default().build()])
-                .map_err(error)?
-                .with_intra_threads(4)
-                .map_err(error)?
-                .with_inter_threads(1)
-                .map_err(error)?
-                .with_optimization_level(GraphOptimizationLevel::Level3)
-                .map_err(error)?
-                .commit_from_file(model_dir.join(name))
-                .map_err(|e| format!("加载 {name} 失败：{e}"))
-        };
-        let encoder = make_session("encoder_model.onnx")?;
-        let decoder = make_session("decoder_model.onnx")?;
+        let encoder = options.make_session(&model_dir.join("encoder_model.onnx"))?;
+        let decoder = options.make_session(&model_dir.join("decoder_model.onnx"))?;
         // 不接受 merged / with_past 等不同签名，避免把输入错误误当识别结果。
         check_inputs(
             &encoder,
@@ -173,11 +181,16 @@ impl NeuralRecognizer {
             start_id,
             eos_id,
             vocab_size,
+            options,
         })
     }
 
     pub fn model_dir(&self) -> &Path {
         &self.model_dir
+    }
+
+    pub fn options(&self) -> &NeuralOptions {
+        &self.options
     }
 
     pub fn recognize(&mut self, strokes: &[Vec<StrokePoint>]) -> Result<NeuralFormula, String> {
@@ -199,9 +212,7 @@ impl NeuralRecognizer {
         strokes: &[Vec<StrokePoint>],
         preview: Option<&mut Option<NeuralInputPreview>>,
     ) -> Result<NeuralFormula, String> {
-        let _slot = INFERENCE_SLOT
-            .try_lock()
-            .map_err(|_| "神经识别槽正在使用，请等待当前任务完成".to_string())?;
+        let _slot = try_neural_slot()?;
         let started = Instant::now();
         let prepared = PreprocessedInk::new(strokes)?;
         if let Some(preview) = preview {
@@ -223,8 +234,8 @@ impl NeuralRecognizer {
         let mut ids = vec![self.start_id];
         let mut log_probability = 0.0;
         let mut finished = false;
-        for _ in 0..MAX_TOKENS {
-            if started.elapsed() >= TIME_BUDGET {
+        for _ in 0..self.options.max_tokens {
+            if started.elapsed() >= self.options.time_budget {
                 break;
             }
             let input_ids = Tensor::from_array(([1, ids.len()], ids.clone())).map_err(error)?;

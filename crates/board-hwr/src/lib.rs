@@ -15,7 +15,7 @@ mod templates;
 
 pub use gate::{AutoCalculate, CalculationRequest, ContextToken};
 pub use latex::{LatexCalculation, latex_to_calculation, latex_to_expression};
-pub use neural::{NeuralFormula, NeuralInputPreview, NeuralRecognizer};
+pub use neural::{NeuralFormula, NeuralInputPreview, NeuralOptions, NeuralRecognizer};
 pub use templates::InkTemplate;
 
 use board_core::StrokePoint;

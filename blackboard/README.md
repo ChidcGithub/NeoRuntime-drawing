@@ -47,6 +47,8 @@ python crates/board-hwr/download_texteller.py --dir models/texteller
 
 The download is approximately 1.25 GB and requires network access. Python is used for installation; inference runs locally. See [model setup, provenance, and licensing](../api/MODELS.md). A directory's existence does not establish model completeness or loading. Review all recognition results; unsupported or ambiguous LaTeX is rejected rather than silently removed.
 
+For low-memory CPUs, use a separately converted INT8 directory; [conversion and benchmark instructions](../api/MODELS.md#low-memory-cpu-preparation) include measured memory/latency and accuracy caveats. The GUI prefers a complete `models/texteller-int8` directory suggestion but still requires explicit loading. Use **Unload model**, or switch to templates, to release it after ongoing work drains. Recognition Off alone retains the model. Reload is unavailable until old inference/loading work has finished. No whole-machine 3 GB guarantee is made.
+
 ## Mathematics scope
 
 - Manual controls calculate, insert results, plot, and set coordinate bounds. Constants support bounded exact fractions and square roots; other supported operations may return approximate results. Overflow, domain errors, and budget limits produce errors.

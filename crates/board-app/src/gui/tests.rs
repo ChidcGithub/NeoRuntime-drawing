@@ -362,6 +362,8 @@ include!("tests/ink_preview.rs");
 
 include!("tests/neural_recognition.rs");
 
+include!("tests/model_lifecycle.rs");
+
 include!("tests/ink_math.rs");
 
 include!("tests/math_workers.rs");

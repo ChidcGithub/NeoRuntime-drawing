@@ -326,7 +326,7 @@ fn backend_switch_reload_and_cancel_discard_stale_neural_work() {
 }
 
 #[test]
-fn model_load_slot_never_queues_or_blocks_and_failure_is_visible() {
+fn model_load_slot_never_queues_or_blocks_and_template_discards_failure() {
     let mut app = app();
     app.set_hwr_backend(HwrBackend::TexTeller);
     let ctx = egui::Context::default();
@@ -348,7 +348,9 @@ fn model_load_slot_never_queues_or_blocks_and_failure_is_visible() {
         assert!(Instant::now() < deadline);
         std::thread::yield_now();
     }
-    assert!(app.model_status.contains("mock model load failure"));
+    assert!(!app.model_status.contains("mock model load failure"));
+    assert!(app.loaded_model_dir.is_empty());
+    assert!(app.neural_recognizer.is_none());
 }
 
 #[test]

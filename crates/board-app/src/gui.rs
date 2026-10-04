@@ -16,7 +16,7 @@ use egui::{Align2, Color32, Key, Pos2, Rect, Sense, Stroke, Vec2, ViewportComman
 use icons::Icon;
 use std::collections::HashMap;
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use std::{
@@ -370,6 +370,67 @@ mod cache;
 type SharedNeural = Arc<Mutex<NeuralRecognizer>>;
 type ModelLoad = std::result::Result<SharedNeural, String>;
 
+fn release_model<T: Send + 'static>(
+    loader: &mut features::Background<std::result::Result<T, String>>,
+    model: &mut Option<T>,
+    loaded_dir: &mut String,
+) {
+    // Cancellation keeps the receiver busy until the old result has been dropped.
+    loader.cancel();
+    *model = None;
+    loaded_dir.clear();
+}
+
+fn start_model_load<T: Send + 'static>(
+    loader: &mut features::Background<std::result::Result<T, String>>,
+    model: &mut Option<T>,
+    ctx: &egui::Context,
+    load: impl FnOnce() -> std::result::Result<T, String> + Send + 'static,
+) {
+    let old = model.take();
+    loader.start(ctx.clone(), move || {
+        // Caller has drained hwr_worker, including its model Arc, before entering.
+        drop(old);
+        load()
+    });
+}
+
+fn poll_model_load<T: Send + 'static>(
+    loader: &mut features::Background<std::result::Result<T, String>>,
+    model: &mut Option<T>,
+    loaded_dir: &mut String,
+    model_dir: &str,
+    backend: HwrBackend,
+    status: &mut String,
+) {
+    if let Some(result) = loader.take() {
+        if backend != HwrBackend::TexTeller
+            || loaded_dir.is_empty()
+            || loaded_dir != model_dir.trim()
+        {
+            *model = None;
+            loaded_dir.clear();
+            *status = "已丢弃过期加载结果；请重新加载（CPU）".into();
+            return;
+        }
+        match result.and_then(|model| model) {
+            Ok(loaded) => {
+                *model = Some(loaded);
+                *status = format!("模型已加载（CPU）：{loaded_dir}");
+            }
+            Err(error) => {
+                *model = None;
+                loaded_dir.clear();
+                *status = format!("模型加载失败（CPU）：{error}");
+            }
+        }
+    }
+    // A cancelled result is consumed by take() without being returned.
+    if !loader.busy() && model.is_none() {
+        loaded_dir.clear();
+    }
+}
+
 struct HwrResult {
     recognition: std::result::Result<Recognition, String>,
     neural: Option<NeuralFormula>,
@@ -415,20 +476,43 @@ fn neural_result(raw: NeuralFormula) -> HwrResult {
     }
 }
 
+const INT8_MODEL_SUGGESTION_FILES: [&str; 6] = [
+    "encoder_model.onnx",
+    "decoder_model.onnx",
+    "config.json",
+    "generation_config.json",
+    "tokenizer.json",
+    "optimization.json",
+];
+
+fn suggested_model_dir(cwd: Option<&Path>, exe_dir: Option<&Path>) -> Option<PathBuf> {
+    // Only fixed paths under these two locations; no traversal, scanning or loading.
+    // Existence is a suggestion heuristic, not content/hash validation.
+    for base in [cwd, exe_dir].into_iter().flatten() {
+        let quantized = base.join("models").join("texteller-int8");
+        if INT8_MODEL_SUGGESTION_FILES
+            .iter()
+            .all(|name| quantized.join(name).exists())
+        {
+            return Some(quantized);
+        }
+    }
+    let relative = PathBuf::from("models").join("texteller");
+    let base = cwd
+        .filter(|p| p.join(&relative).is_dir())
+        .or_else(|| exe_dir.filter(|p| p.join(&relative).is_dir()))
+        .or(cwd)
+        .or(exe_dir);
+    base.map(|p| p.join(relative))
+}
+
 fn default_model_dir() -> String {
     let cwd = std::env::current_dir().ok();
     let exe = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    // Only two explicit locations, no parent traversal or directory scanning.
-    let relative = PathBuf::from("models").join("texteller");
-    let base = cwd
-        .as_ref()
-        .filter(|p| p.join(&relative).is_dir())
-        .or_else(|| exe.as_ref().filter(|p| p.join(&relative).is_dir()))
-        .or(cwd.as_ref())
-        .or(exe.as_ref());
-    base.map(|p| p.join(relative).display().to_string())
+    suggested_model_dir(cwd.as_deref(), exe.as_deref())
+        .map(|p| p.display().to_string())
         .unwrap_or_default()
 }
 
@@ -1143,7 +1227,27 @@ impl BoardApp {
             self.cancel_ink();
             self.expression.clear();
             self.hwr_backend = backend;
+            if backend == HwrBackend::Template {
+                self.unload_model();
+            }
         }
+    }
+
+    fn unload_model(&mut self) {
+        self.cancel_ink();
+        self.expression.clear();
+        release_model(
+            &mut self.model_loader,
+            &mut self.neural_recognizer,
+            &mut self.loaded_model_dir,
+        );
+        self.model_status = "未加载模型（CPU）".into();
+    }
+
+    fn model_load_ready(&self) -> bool {
+        self.hwr_backend == HwrBackend::TexTeller
+            && !self.model_loader.busy()
+            && !self.hwr_worker.busy()
     }
 
     fn load_model(&mut self, ctx: &egui::Context) {
@@ -1152,18 +1256,23 @@ impl BoardApp {
         }
         self.cancel_ink();
         self.expression.clear();
+        if !self.model_load_ready() {
+            self.model_status = "等待旧识别任务排空后再加载（CPU）".into();
+            return;
+        }
         let path = PathBuf::from(self.model_dir.trim());
         if !path.is_absolute() {
             self.model_status = "请输入明确的绝对模型目录；不会扫描目录".into();
             return;
         }
-        let old = self.neural_recognizer.take();
         self.loaded_model_dir = self.model_dir.trim().to_owned();
-        self.model_status = format!("后台加载中：{}", path.display());
-        self.model_loader.start(ctx.clone(), move || {
-            drop(old);
-            NeuralRecognizer::load(&path).map(|model| Arc::new(Mutex::new(model)))
-        });
+        self.model_status = format!("后台加载中（CPU）：{}", path.display());
+        start_model_load(
+            &mut self.model_loader,
+            &mut self.neural_recognizer,
+            ctx,
+            move || NeuralRecognizer::load(&path).map(|model| Arc::new(Mutex::new(model))),
+        );
     }
 
     fn poll_backend_ink(&mut self, ctx: &egui::Context, now: Instant) {
@@ -1318,18 +1427,14 @@ impl BoardApp {
         {
             self.cancel_ink();
         }
-        if let Some(result) = self.model_loader.take() {
-            match result.and_then(|model| model) {
-                Ok(model) => {
-                    self.neural_recognizer = Some(model);
-                    self.model_status = format!(
-                        "模型已加载（本地 CPU）：{}；可开始书写",
-                        self.loaded_model_dir
-                    );
-                }
-                Err(error) => self.model_status = format!("模型加载失败：{error}"),
-            }
-        }
+        poll_model_load(
+            &mut self.model_loader,
+            &mut self.neural_recognizer,
+            &mut self.loaded_model_dir,
+            &self.model_dir,
+            self.hwr_backend,
+            &mut self.model_status,
+        );
         // Let this frame's canvas pen-down/settings actions invalidate work before delivery.
         if ctx
             .input(|i| i.pointer.any_down() || i.pointer.any_pressed() || i.pointer.any_released())
@@ -2696,7 +2801,8 @@ impl BoardApp {
                     let mut mode = self.ink_math_mode;
                     ui.label("手写识别（默认关闭）")
                         .on_hover_text("启用后停笔 2.5 秒触发识别；仅本次运行有效，不自动计算或绘图。");
-                    ui.radio_value(&mut mode, InkMathMode::Off, "关闭手写计算/识别");
+                    ui.radio_value(&mut mode, InkMathMode::Off, "关闭手写计算/识别")
+                        .on_hover_text("关闭识别仍保留已加载模型；释放内存请点击“卸载模型”或切换模板后端。");
                     ui.radio_value(&mut mode, InkMathMode::Confirm, "启用手写识别（点击图标才计算/绘图）");
                     self.set_ink_math_mode(mode);
                     let mut backend = self.hwr_backend;
@@ -2715,10 +2821,21 @@ impl BoardApp {
                                 self.model_status = "目录已修改；请点击后台加载 / 重载模型".into();
                             }
                         });
-                        if ui.add_enabled(!self.model_loader.busy(), egui::Button::new("后台加载 / 重载模型")).clicked() {
-                            self.load_model(ctx);
-                        }
+                        ui.horizontal(|ui| {
+                            if ui.add_enabled(self.model_load_ready(), egui::Button::new("后台加载 / 重载模型")).clicked() {
+                                self.load_model(ctx);
+                            }
+                            if ui.add_enabled(self.neural_recognizer.is_some() || self.model_loader.busy() || !self.loaded_model_dir.is_empty(), egui::Button::new("卸载模型")).clicked() {
+                                self.unload_model();
+                            }
+                        });
                         ui.label(&self.model_status);
+                        if self.model_loader.busy() || self.hwr_worker.busy() {
+                            ui.small("后台任务未排空；取消/卸载不强杀线程，排空前不能重载。");
+                        }
+                        ui.small("关闭识别仍保留模型；卸载或切模板会释放，进行中的任务排空后完成释放。");
+                        ui.small("默认优先建议文件齐全的 models/texteller-int8；仅检查存在，不保证内容或哈希有效，仍须点击加载后校验。");
+                        ui.colored_label(Color32::YELLOW, "低内存设备建议手动加载独立量化目录（models/texteller-int8）。FP32 模型内存占用高，不保证 3GB 内运行；目录建议不代表已量化或整机内存达标。");
                         ui.colored_label(Color32::YELLOW, "模型可能看错，请核对后点击计算/绘图。");
                     }
                     if let Some(diagnostic) = &self.ink_diagnostic

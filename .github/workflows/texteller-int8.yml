@@ -1,0 +1,94 @@
+name: TexTeller INT8 preparation
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_candidate:
+        description: 'Upload weights only after model license/quality review in distribution/legal/model'
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: texteller-int8-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+      - name: Check optional publication materials
+        if: ${{ inputs.upload_candidate }}
+        run: |
+          test -s distribution/legal/model/REVIEWED.md
+          echo 'Maintainer requested model artifact publication; synthetic benchmarks are not accuracy clearance.'
+      - name: Install conversion tools
+        run: |
+          mkdir -p .ci-reports
+          python -m pip install --disable-pip-version-check -r crates/board-hwr/requirements-quantize.txt psutil
+          python -m pip freeze > .ci-reports/conversion-environment.txt
+          git rev-parse HEAD > .ci-reports/commit.txt
+      - name: Test conversion guards
+        run: |
+          python -m unittest discover -s crates/board-hwr -p test_prepare_texteller_int8.py -v > .ci-reports/converter-tests.txt 2>&1
+          python -m unittest discover -s scripts -p test_package_candidate.py -v > .ci-reports/package-tests.txt 2>&1
+      - name: Download and verify pinned FP32 weights
+        timeout-minutes: 30
+        run: python crates/board-hwr/download_texteller.py --dir models/texteller
+      - name: Convert sequentially without modifying originals
+        timeout-minutes: 35
+        run: |
+          python crates/board-hwr/prepare_texteller_int8.py --source models/texteller --output models/texteller-int8
+          cp models/texteller-int8/optimization.json .ci-reports/optimization.json
+      - name: Install Rust and build the CPU benchmark
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target x86_64-pc-windows-msvc
+          rustc +1.97.1 --version --verbose > .ci-reports/toolchain.txt
+          cargo +1.97.1 build -p board-hwr --example neural_benchmark --release --locked > .ci-reports/benchmark-build.txt 2>&1
+      - name: Measure matched FP32 and INT8 inputs in separate processes
+        timeout-minutes: 18
+        run: |
+          python crates/board-hwr/examples/neural_benchmark_runner.py --exe target/release/examples/neural_benchmark.exe --model-dir models/texteller --profile low-memory --ink-repeat 1 --rounds 3 --cpu 2 --timeout 240 > .ci-reports/fp32-short.json
+          python crates/board-hwr/examples/neural_benchmark_runner.py --exe target/release/examples/neural_benchmark.exe --model-dir models/texteller-int8 --profile low-memory --ink-repeat 1 --rounds 3 --cpu 2 --timeout 240 > .ci-reports/int8-short.json
+          python crates/board-hwr/examples/neural_benchmark_runner.py --exe target/release/examples/neural_benchmark.exe --model-dir models/texteller --profile low-memory --ink-repeat 4 --rounds 3 --cpu 2 --timeout 240 > .ci-reports/fp32-long.json
+          python crates/board-hwr/examples/neural_benchmark_runner.py --exe target/release/examples/neural_benchmark.exe --model-dir models/texteller-int8 --profile low-memory --ink-repeat 4 --rounds 3 --cpu 2 --timeout 240 > .ci-reports/int8-long.json
+      - name: Check benchmark completion, not mathematical accuracy
+        run: |
+          python -c "import json,pathlib; paths=[pathlib.Path('.ci-reports')/(n+'.json') for n in ['fp32-short','int8-short','fp32-long','int8-long']]; reports=[json.loads(p.read_text(encoding='utf-8-sig')) for p in paths]; assert all(r['ok'] and len([e for e in r['benchmark_events'] if e['event']=='recognize'])==3 and all(e.get('finished_eos') for e in r['benchmark_events'] if e['event']=='recognize') for r in reports), 'Benchmark error or missing EOS'; print('Completed synthetic inference; quality and whole-machine 3GB acceptance remain unverified')"
+      - name: Assemble explicitly approved model candidate
+        if: ${{ inputs.upload_candidate }}
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p release-artifacts
+          python scripts/package_candidate.py --kind model --input-dir models/texteller-int8 --output-dir release-artifacts/model --legal-dir distribution/legal/model --commit "$BUILD_COMMIT"
+      - name: Upload reports without weights
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: int8-preparation-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-reports/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload approved model candidate
+        if: ${{ success() && inputs.upload_candidate }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: texteller-int8-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-artifacts/model/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

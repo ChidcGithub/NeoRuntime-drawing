@@ -93,6 +93,7 @@ Drawing has no mathematics panel. Blackboard supports manual calculation, result
 - Implicit plots support single x/y polynomial equations with numeric coefficients and total degree at most two. Arbitrary implicit, higher-degree, and parametric plots are unsupported; implicit/mixed-plot intersection search is not supported.
 - **Handwriting recognition is off by default.** Enabling it allows a 2.5-second writing pause to trigger recognition only. Review or manually correct the candidate, then click its calculate or plot icon. Recognition does not automatically calculate, plot, or write back.
 - The default offline template recognizer is limited, with explicit personal-template learning/save/load. Optional TexTeller recognition uses local Rust/ONNX Runtime inference and separately prepared models. Select its backend, provide an absolute model directory, and explicitly load it; the GUI does not download or automatically load models.
+- Low-memory CPU use: prepare a separate dynamic INT8 model directory with the [offline converter](crates/board-hwr/prepare_texteller_int8.py). Local synthetic benchmarks reduced model-process peak working set from about 1.3 GiB to 0.48 GiB; this is **not** full-GUI or i5/3 GB whole-machine acceptance. See [setup, measurements, and limitations](api/MODELS.md#low-memory-cpu-preparation). The GUI provides model unloading and prevents overlapping reload/inference residency.
 - The optional [model preparation script](crates/board-hwr/download_texteller.py) requires Python and network access and downloads approximately 1.25 GB. This is a separate opt-in action, not part of the source release or ordinary drawing setup. Model and runtime licensing must be reviewed separately before redistribution.
 
 Recognition candidates are held in memory and can become invalid after source or nearby-content edits. Successful calculation preserves the original ink and adds a result as one undo step. Recognition scores are not correctness guarantees.
@@ -111,6 +112,7 @@ Recognition candidates are held in memory and can become invalid after source or
 
 - [Changelog: English and Chinese release notes](CHANGELOG.md)
 - [Source release procedure and distribution boundaries](RELEASING.md)
+- [Application and INT8 model build workflows](api/BUILD_PIPELINE.md) (manual; reports only by default)
 - [Communication protocol](api/PROTOCOL.md) and [API reference](api/DRAWING_API.md)
 - [Drawing guide](drawing/README.md) and [Blackboard guide](blackboard/README.md)
 

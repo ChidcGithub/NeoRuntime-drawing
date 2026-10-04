@@ -66,6 +66,109 @@ fn missing_model_is_error() {
     assert!(NeuralRecognizer::load(Path::new("missing-texteller-model-directory")).is_err());
 }
 #[test]
+fn resource_profiles_preserve_accuracy_limits_and_baseline() {
+    let low = NeuralOptions::default();
+    assert_eq!(low, NeuralOptions::low_memory());
+    assert_eq!(low.max_tokens, 256);
+    assert_eq!(low.time_budget, Duration::from_secs(60));
+    assert_eq!(low.optimization_level, 3);
+    assert!(!low.cpu_arena && !low.memory_pattern && !low.spinning);
+    assert!(low.prepacking);
+    let available = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1);
+    assert_eq!(low.effective_intra_threads().unwrap(), available.min(2));
+    let baseline = NeuralOptions::baseline();
+    assert_eq!(baseline.effective_intra_threads().unwrap(), 4);
+    assert_eq!(baseline.optimization_level, 3);
+    assert!(!baseline.cpu_arena);
+    assert!(baseline.memory_pattern && baseline.prepacking && baseline.spinning);
+    assert_eq!(baseline.max_tokens, low.max_tokens);
+    assert_eq!(baseline.time_budget, low.time_budget);
+    for n in 1..=4 {
+        let options = NeuralOptions {
+            intra_threads: Some(n),
+            ..low.clone()
+        };
+        assert_eq!(options.effective_intra_threads().unwrap(), n);
+    }
+}
+
+#[test]
+fn invalid_options_are_rejected_before_model_access() {
+    let low = NeuralOptions::default();
+    for options in [
+        NeuralOptions {
+            intra_threads: Some(0),
+            ..low.clone()
+        },
+        NeuralOptions {
+            intra_threads: Some(5),
+            ..low.clone()
+        },
+        NeuralOptions {
+            intra_threads: Some(usize::MAX),
+            ..low.clone()
+        },
+        NeuralOptions {
+            optimization_level: 4,
+            ..low.clone()
+        },
+        NeuralOptions {
+            max_tokens: 0,
+            ..low.clone()
+        },
+        NeuralOptions {
+            max_tokens: 257,
+            ..low.clone()
+        },
+        NeuralOptions {
+            time_budget: Duration::ZERO,
+            ..low.clone()
+        },
+        NeuralOptions {
+            time_budget: Duration::from_secs(61),
+            ..low.clone()
+        },
+    ] {
+        let expected = options.validate().unwrap_err();
+        assert!(options.effective_intra_threads().is_err());
+        let actual = NeuralRecognizer::load_with_options(Path::new("missing-model"), options)
+            .err()
+            .expect("invalid options must fail");
+        assert_eq!(actual, expected);
+    }
+    assert!(
+        NeuralOptions {
+            max_tokens: 1,
+            time_budget: Duration::from_millis(1),
+            ..low
+        }
+        .validate()
+        .is_ok()
+    );
+}
+
+#[test]
+fn load_and_inference_share_nonqueuing_slot_across_threads() {
+    // Both entry points acquire this same guard before allocating input/models.
+    let slot = INFERENCE_SLOT.lock().unwrap();
+    assert!(try_neural_slot().unwrap_err().contains("busy"));
+    std::thread::spawn(|| {
+        assert!(try_neural_slot().unwrap_err().contains("busy"));
+        let error = NeuralRecognizer::load(Path::new("missing-model"))
+            .err()
+            .expect("load must fail busy before accessing the directory");
+        assert!(error.contains("busy"));
+    })
+    .join()
+    .unwrap();
+    drop(slot);
+    // A failed load must release its guard too (regardless of a competing test).
+    assert!(NeuralRecognizer::load(Path::new("missing-model")).is_err());
+}
+
+#[test]
 #[ignore = "需要下载真实 TexTeller 权重；设置 TEXTELLER_MODEL_DIR 后显式运行"]
 fn actual_model_one_plus_one() {
     let dir = std::env::var_os("TEXTELLER_MODEL_DIR").expect("设置 TEXTELLER_MODEL_DIR");
@@ -107,12 +210,7 @@ fn actual_model_one_plus_one() {
     assert!(!result.latex.is_empty());
     {
         let _slot = INFERENCE_SLOT.lock().unwrap();
-        assert!(
-            recognizer
-                .recognize(&strokes)
-                .unwrap_err()
-                .contains("识别槽")
-        );
+        assert!(recognizer.recognize(&strokes).unwrap_err().contains("busy"));
     }
     let again = recognizer
         .recognize(&strokes)
