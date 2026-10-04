@@ -1,0 +1,44 @@
+[
+  {
+    "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+    "utc": "2026-10-04T03:04:59.720619+00:00",
+    "status": 200,
+    "file": "LICENSE-APACHE-2.0.txt",
+    "bytes": 11358,
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "final_url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/OleehyO/TexTeller/12e6bb4312cc934bb4b69fcda2a1ac38e94930e6/LICENSE",
+    "utc": "2026-10-04T03:04:59.721424+00:00",
+    "error": "ConnectionResetError",
+    "status": "FAILED"
+  },
+  {
+    "url": "https://hf-mirror.com/OleehyO/TexTeller/raw/7b96df06b9d81cdb129c3bef68b7250bc3e2b0ea/README.md",
+    "utc": "2026-10-04T03:04:59.721968+00:00",
+    "status": 200,
+    "file": "MODEL-CARD-MIRROR.md",
+    "bytes": 1457,
+    "sha256": "ac635a57419f02053817d7aa6922db9afffa563af8f7bcf1bd92775d99207ba4",
+    "final_url": "https://hf-mirror.com/OleehyO/TexTeller/raw/7b96df06b9d81cdb129c3bef68b7250bc3e2b0ea/README.md"
+  },
+  {
+    "url": "https://hf-mirror.com/api/models/OleehyO/TexTeller/revision/7b96df06b9d81cdb129c3bef68b7250bc3e2b0ea",
+    "utc": "2026-10-04T03:04:59.722421+00:00",
+    "status": 200,
+    "file": "HF-REVISION-MIRROR.txt",
+    "bytes": 2030,
+    "sha256": "2da53a12c7b0f016b47fce12a1082243cc13b16acd43cfd5c0b58fe0f7774156",
+    "final_url": "https://hf-mirror.com/api/models/OleehyO/TexTeller/revision/7b96df06b9d81cdb129c3bef68b7250bc3e2b0ea"
+  },
+  {
+    "url": "https://api.github.com/repos/OleehyO/TexTeller/git/trees/12e6bb4312cc934bb4b69fcda2a1ac38e94930e6?recursive=1",
+    "utc": "2026-10-04T03:04:59.727357+00:00",
+    "status": 200,
+    "file": "SOURCE-TREE-GITHUB.txt",
+    "bytes": 31682,
+    "sha256": "247dabe5848f3c90542f62ae26153c39138cb5e612eac5f5d446e51a580ff74c",
+    "final_url": "https://api.github.com/repos/OleehyO/TexTeller/git/trees/12e6bb4312cc934bb4b69fcda2a1ac38e94930e6?recursive=1"
+  }
+]

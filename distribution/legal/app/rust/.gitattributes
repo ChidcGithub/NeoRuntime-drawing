@@ -1,0 +1,5 @@
+# Preserve upstream bytes so inventory hashes survive Git checkout.
+texts/** -text
+upstream/** -text
+*.json text eol=lf
+*.md text eol=lf

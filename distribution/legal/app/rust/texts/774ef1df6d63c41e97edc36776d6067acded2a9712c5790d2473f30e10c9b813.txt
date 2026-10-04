@@ -1,0 +1,5 @@
+### Copyright
+
+A majority of the code and documentation was taken from [`std::time`]. For
+license information see [#License](https://github.com/rust-lang/rust/tree/1.68.1#license).
+

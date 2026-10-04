@@ -1,0 +1,8 @@
+{
+  "api_url": "https://api.github.com/repos/microsoft/onnxruntime/contents/ThirdPartyNotices.txt?ref=v1.22.0",
+  "html_url": "https://github.com/microsoft/onnxruntime/blob/v1.22.0/ThirdPartyNotices.txt",
+  "git_blob_sha1": "7b2bbdd2094d14e40338c7645b25a78ae8cd5364",
+  "sha256": "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc",
+  "bytes": 326866,
+  "method": "Decoded GitHub Contents API base64; verified Git blob SHA-1; original bytes retained"
+}

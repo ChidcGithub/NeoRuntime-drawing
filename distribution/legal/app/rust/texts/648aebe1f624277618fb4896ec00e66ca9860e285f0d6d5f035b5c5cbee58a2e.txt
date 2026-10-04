@@ -1,0 +1,6 @@
+## Attribution
+
+Inspiration was taken from the [instant](https://github.com/sebcrozet/instant/tree/v0.1.12) project.
+
+Additional insight was taken from the [time](https://github.com/time-rs/time/tree/v0.3.20) project.
+

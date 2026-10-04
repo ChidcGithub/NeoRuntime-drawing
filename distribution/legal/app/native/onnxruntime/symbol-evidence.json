@@ -1,0 +1,67 @@
+{
+  "artifact": "onnxruntime/lib/onnxruntime.lib",
+  "sha256": "ea936a55f367d8eeaafd50e595a18b254281ed16fe566c614e6e4b10055ce024",
+  "method": "Read-only ASCII symbol-fragment search; examples exclude colon/backslash paths; not an exact component/version inventory or proof of final linker retention",
+  "symbol_fragments": [
+    {
+      "term": "Eigen",
+      "examples": [
+        "onnxruntime@@@concurrency@onnxruntime@@@Eigen@@QEAA@XZ",
+        "??1?$MaxSizeVector@V?$MaxSizeVector@I@Eigen@@@Eigen@@QEAA@XZ",
+        "??1ThreadPoolInterface@Eigen@@UEAA@XZ",
+        "??_7ThreadPoolInterface@Eigen@@6B@",
+        "??_GThreadPoolInterface@Eigen@@UEAAPEAXI@Z"
+      ]
+    },
+    {
+      "term": "onnxruntime",
+      "examples": [
+        "??$MakeString@$$BY0O@D_K$$BY02D_K@onnxruntime@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEAY0O@$$CBDAEB_KAEAY02$$CBD1@Z",
+        "@$$BY0P@D_K$$BY02D_K$$BY07D_K$$BY0M@D_N@onnxruntime@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEAY0P@$$CBDAEB_KAEAY02$$CBD1AEAY07$$CBD1AEAY0M@$$CB",
+        "??$MakeString@$$V@onnxruntime@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@XZ",
+        "??$MakeStringImpl@PEBD_KPEBD_K@detail@onnxruntime@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AEBQEBDAEB_K01@Z",
+        "??0CodeLocation@onnxruntime@@QEAA@PEBDH0AEBV?$vector@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$allocator@V?$basic_string@DU?"
+      ]
+    },
+    {
+      "term": "absl",
+      "examples": [
+        "Zeros@I@container_internal@lts_20240722@absl@@YAII@Z",
+        "nState@onnxruntime@@@std@@@lts_20240722@absl@@@container_internal@lts_20240722@absl@@UStringHash@234@UStringEq@234@V?$allocator@U?$pair@$$CBV?$basic_string@DU?$char",
+        "nState@onnxruntime@@@std@@@lts_20240722@absl@@@std@@@std@@@container_internal@lts_20240722@absl@@AEAAXXZ",
+        "ingHashState@hash_internal@lts_20240722@absl@@@hash_internal@lts_20240722@absl@@YA?AVMixingHashState@012@V3012@V?$basic_string_view@DU?$char_traits@D@std@@@std@@@Z",
+        "ingHashState@hash_internal@lts_20240722@absl@@X@hash_internal@lts_20240722@absl@@YA?AVMixingHashState@012@V3012@V?$basic_string_view@_WU?$char_traits@_W@std@@@std@@"
+      ]
+    },
+    {
+      "term": "protobuf",
+      "examples": [
+        "@onnxruntime@@UEAAAEBV?$RepeatedField@M@protobuf@google@@PEBVAttributeProto@onnx@@@Z",
+        "onnxruntime@@UEAAAEBV?$RepeatedField@_J@protobuf@google@@PEBVAttributeProto@onnx@@@Z",
+        "@onnxruntime@@UEAAPEAV?$RepeatedField@M@protobuf@google@@PEAVAttributeProto@onnx@@@Z",
+        "onnxruntime@@UEAAPEAV?$RepeatedField@_J@protobuf@google@@PEAVAttributeProto@onnx@@@Z",
+        "PtrField@VStringStringEntryProto@onnx@@@protobuf@google@@PEAVFunctionProto@onnx@@@Z"
+      ]
+    },
+    {
+      "term": "flatbuffers",
+      "examples": [
+        "??$EndianScalar@E@flatbuffers@@YAEE@Z",
+        "??$EndianScalar@G@flatbuffers@@YAGG@Z",
+        "??$EndianScalar@H@flatbuffers@@YAHH@Z",
+        "??$EndianScalar@I@flatbuffers@@YAII@Z",
+        "oot@UInferenceSession@fbs@onnxruntime@@@flatbuffers@@YAPEAUInferenceSession@fbs@onnxruntime@@PEAX@Z"
+      ]
+    },
+    {
+      "term": "re2",
+      "examples": [
+        "?IID_IAppointmentStore2@Appointments@ApplicationModel@Windows@ABI@@3AEBU_GUID@@EB",
+        "?IID_ICertificateStore2@Certificates@Cryptography@Security@Windows@ABI@@3AEBU_GUID@@EB",
+        "?IID_IContactAnnotationStore2@Contacts@ApplicationModel@Windows@ABI@@3AEBU_GUID@@EB",
+        "?IID_IContactStore2@Contacts@ApplicationModel@Windows@ABI@@3AEBU_GUID@@EB",
+        "?IID_IMediaCapture2@Capture@Media@Windows@ABI@@3AEBU_GUID@@EB"
+      ]
+    }
+  ]
+}

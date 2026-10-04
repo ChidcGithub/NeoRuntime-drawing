@@ -1,0 +1,51 @@
+{
+  "metadata_command": "cargo metadata --format-version 1 --locked --offline --filter-platform x86_64-pc-windows-msvc",
+  "package": "ort-sys",
+  "version": "2.0.0-rc.10",
+  "registry_source": "registry+https://github.com/rust-lang/crates.io-index",
+  "crate_cache_locator": "<CARGO_HOME>/registry/src/<registry>/ort-sys-2.0.0-rc.10",
+  "vcs": {
+    "git": {
+      "sha1": "daf91046dc814d5aea61d24e0daf571c7df91930"
+    },
+    "path_in_vcs": "ort-sys"
+  },
+  "build_output": "target/release/build/ort-sys-d8983585266b2d39/output",
+  "build_output_original_sha256": "e3f7c2163911db03807709b76b380f5db4a04e969818ca1eebd12944599b1e20",
+  "native_cache_locator": "<LOCALAPPDATA>/ort.pyke.io/dfbin/x86_64-pc-windows-msvc/540D19B3379FDA6FB8F7280D8C15EFDE20ED225A67A357A6DAE38C4300FE190D",
+  "cache_location_evidence": "cargo:rustc-link-search=native from the recorded build output; no global cache search",
+  "native_cache_inventory": [
+    {
+      "path": "onnxruntime/lib/DirectML.dll",
+      "size": 18527776,
+      "sha256": "9c9e6d822561c6c41b90e6994b3e8857cf1d66dbfb1e0c4c799c7c89b4e92da1"
+    },
+    {
+      "path": "onnxruntime/lib/onnxruntime.lib",
+      "size": 303265000,
+      "sha256": "ea936a55f367d8eeaafd50e595a18b254281ed16fe566c614e6e4b10055ce024"
+    }
+  ],
+  "crate_materials": [
+    {
+      "path": "ort-sys/LICENSE-MIT",
+      "sha256": "b880185add684cd1c6d24394a2e30fe08b75ba4586619b0890ce764bc4cd43a0"
+    },
+    {
+      "path": "ort-sys/LICENSE-APACHE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "ort-sys/dist.txt",
+      "sha256": "fb86c7652b69659ad3ec56acc39a59be3ed395bd4a89a3e4430e219333127219"
+    },
+    {
+      "path": "ort-sys/build.rs",
+      "sha256": "c1e166d9f3025251e755ea98bbcce4e2e15d6cc19fd57afc5ef2951e2aca6995"
+    },
+    {
+      "path": "ort-sys/.cargo_vcs_info.json",
+      "sha256": "219726b2ce9fa6318652b07706e32c2a6e1ac1479bd6d1d28eb4e94ec97705ad"
+    }
+  ]
+}

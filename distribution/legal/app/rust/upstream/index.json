@@ -1,0 +1,316 @@
+{
+  "schema_version": 1,
+  "retrieval": "Explicit official GitHub contents and raw requests at fixed commits; raw bytes verified against contents Git blob SHA-1.",
+  "files": [
+    {
+      "repository": "https://github.com/emilk/egui",
+      "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "source_path": "LICENSE-MIT",
+      "contents_url": "https://api.github.com/repos/emilk/egui/contents/LICENSE-MIT?ref=49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "raw_url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
+      "git_blob_sha1": "673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9",
+      "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c",
+      "bytes": 1092,
+      "file": "upstream/emilk--egui--49682f8baa058bf49e011035cfbd6e825f88a5ef--LICENSE-MIT",
+      "crate_names": [
+        "ecolor",
+        "eframe",
+        "egui",
+        "egui-wgpu",
+        "egui-winit",
+        "egui_glow",
+        "emath",
+        "epaint",
+        "epaint_default_fonts"
+      ],
+      "crate_commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/emilk/egui",
+      "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "source_path": "LICENSE-APACHE",
+      "contents_url": "https://api.github.com/repos/emilk/egui/contents/LICENSE-APACHE?ref=49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "raw_url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-APACHE",
+      "git_blob_sha1": "11069edd79019f7dafbe3138841cf289209270dd",
+      "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+      "bytes": 10850,
+      "file": "upstream/emilk--egui--49682f8baa058bf49e011035cfbd6e825f88a5ef--LICENSE-APACHE",
+      "crate_names": [
+        "ecolor",
+        "eframe",
+        "egui",
+        "egui-wgpu",
+        "egui-winit",
+        "egui_glow",
+        "emath",
+        "epaint",
+        "epaint_default_fonts"
+      ],
+      "crate_commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/AccessKit/accesskit",
+      "commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "source_path": "LICENSE-MIT",
+      "contents_url": "https://api.github.com/repos/AccessKit/accesskit/contents/LICENSE-MIT?ref=a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "raw_url": "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-MIT",
+      "git_blob_sha1": "31aa79387f27e730e33d871925e152e35e428031",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+      "bytes": 1023,
+      "file": "upstream/AccessKit--accesskit--a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969--LICENSE-MIT",
+      "crate_names": [
+        "accesskit"
+      ],
+      "crate_commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/AccessKit/accesskit",
+      "commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "source_path": "LICENSE-APACHE",
+      "contents_url": "https://api.github.com/repos/AccessKit/accesskit/contents/LICENSE-APACHE?ref=a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "raw_url": "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-APACHE",
+      "git_blob_sha1": "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d",
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+      "bytes": 9723,
+      "file": "upstream/AccessKit--accesskit--a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969--LICENSE-APACHE",
+      "crate_names": [
+        "accesskit"
+      ],
+      "crate_commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/AccessKit/accesskit",
+      "commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "source_path": "LICENSE.chromium",
+      "contents_url": "https://api.github.com/repos/AccessKit/accesskit/contents/LICENSE.chromium?ref=a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "raw_url": "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE.chromium",
+      "git_blob_sha1": "a32e00ce6be3620adca152e53734f7de8fda38cf",
+      "sha256": "845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308",
+      "bytes": 1559,
+      "file": "upstream/AccessKit--accesskit--a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969--LICENSE.chromium",
+      "crate_names": [
+        "accesskit"
+      ],
+      "crate_commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/AccessKit/accesskit",
+      "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "source_path": "LICENSE-MIT",
+      "contents_url": "https://api.github.com/repos/AccessKit/accesskit/contents/LICENSE-MIT?ref=1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "raw_url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE-MIT",
+      "git_blob_sha1": "31aa79387f27e730e33d871925e152e35e428031",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+      "bytes": 1023,
+      "file": "upstream/AccessKit--accesskit--1bbcf100942bac96c2c3a4a91cb67b0b20201a24--LICENSE-MIT",
+      "crate_names": [
+        "accesskit_consumer",
+        "accesskit_windows",
+        "accesskit_winit"
+      ],
+      "crate_commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/AccessKit/accesskit",
+      "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "source_path": "LICENSE-APACHE",
+      "contents_url": "https://api.github.com/repos/AccessKit/accesskit/contents/LICENSE-APACHE?ref=1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "raw_url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE-APACHE",
+      "git_blob_sha1": "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d",
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+      "bytes": 9723,
+      "file": "upstream/AccessKit--accesskit--1bbcf100942bac96c2c3a4a91cb67b0b20201a24--LICENSE-APACHE",
+      "crate_names": [
+        "accesskit_consumer",
+        "accesskit_windows",
+        "accesskit_winit"
+      ],
+      "crate_commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/AccessKit/accesskit",
+      "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "source_path": "LICENSE.chromium",
+      "contents_url": "https://api.github.com/repos/AccessKit/accesskit/contents/LICENSE.chromium?ref=1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "raw_url": "https://raw.githubusercontent.com/AccessKit/accesskit/1bbcf100942bac96c2c3a4a91cb67b0b20201a24/LICENSE.chromium",
+      "git_blob_sha1": "a32e00ce6be3620adca152e53734f7de8fda38cf",
+      "sha256": "845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308",
+      "bytes": 1559,
+      "file": "upstream/AccessKit--accesskit--1bbcf100942bac96c2c3a4a91cb67b0b20201a24--LICENSE.chromium",
+      "crate_names": [
+        "accesskit_consumer",
+        "accesskit_windows",
+        "accesskit_winit"
+      ],
+      "crate_commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/DoumanAsh/clipboard-win",
+      "commit": "3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342",
+      "source_path": "LICENSE",
+      "contents_url": "https://api.github.com/repos/DoumanAsh/clipboard-win/contents/LICENSE?ref=3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342",
+      "raw_url": "https://raw.githubusercontent.com/DoumanAsh/clipboard-win/3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342/LICENSE",
+      "git_blob_sha1": "36b7cd93cdfbac762f5be4c6ce276df2ea6305c2",
+      "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+      "bytes": 1338,
+      "file": "upstream/DoumanAsh--clipboard-win--3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342--LICENSE",
+      "crate_names": [
+        "clipboard-win"
+      ],
+      "crate_commit": "3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/brendanzab/gl-rs",
+      "commit": "ea503e8d5fb6d73c6030e6191ce738cd3bf3433e",
+      "source_path": "LICENSE",
+      "contents_url": "https://api.github.com/repos/brendanzab/gl-rs/contents/LICENSE?ref=ea503e8d5fb6d73c6030e6191ce738cd3bf3433e",
+      "raw_url": "https://raw.githubusercontent.com/brendanzab/gl-rs/ea503e8d5fb6d73c6030e6191ce738cd3bf3433e/LICENSE",
+      "git_blob_sha1": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358,
+      "file": "upstream/brendanzab--gl-rs--ea503e8d5fb6d73c6030e6191ce738cd3bf3433e--LICENSE",
+      "crate_names": [
+        "gl_generator"
+      ],
+      "crate_commit": "ea503e8d5fb6d73c6030e6191ce738cd3bf3433e",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/brendanzab/gl-rs",
+      "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+      "source_path": "LICENSE",
+      "contents_url": "https://api.github.com/repos/brendanzab/gl-rs/contents/LICENSE?ref=f150967b1c44ae888e6676f93f639ebc82771bdc",
+      "raw_url": "https://raw.githubusercontent.com/brendanzab/gl-rs/f150967b1c44ae888e6676f93f639ebc82771bdc/LICENSE",
+      "git_blob_sha1": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358,
+      "file": "upstream/brendanzab--gl-rs--f150967b1c44ae888e6676f93f639ebc82771bdc--LICENSE",
+      "crate_names": [
+        "khronos_api"
+      ],
+      "crate_commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/aclysma/profiling",
+      "commit": "8271551172eb6fa4cba47369aedd93790c623df9",
+      "source_path": "LICENSE-MIT",
+      "contents_url": "https://api.github.com/repos/aclysma/profiling/contents/LICENSE-MIT?ref=8271551172eb6fa4cba47369aedd93790c623df9",
+      "raw_url": "https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-MIT",
+      "git_blob_sha1": "6a84e059ad8b43e03c2b06bc2af4dc1d8442808d",
+      "sha256": "c8167fdeeed46d3f244d3f85c5bf998ce889343691c32be2c61a8bc4b5c08333",
+      "bytes": 1093,
+      "file": "upstream/aclysma--profiling--8271551172eb6fa4cba47369aedd93790c623df9--LICENSE-MIT",
+      "crate_names": [
+        "profiling"
+      ],
+      "crate_commit": "8271551172eb6fa4cba47369aedd93790c623df9",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/aclysma/profiling",
+      "commit": "8271551172eb6fa4cba47369aedd93790c623df9",
+      "source_path": "LICENSE-APACHE",
+      "contents_url": "https://api.github.com/repos/aclysma/profiling/contents/LICENSE-APACHE?ref=8271551172eb6fa4cba47369aedd93790c623df9",
+      "raw_url": "https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-APACHE",
+      "git_blob_sha1": "139dce95d473c201a8561ef17536314d8b8cda65",
+      "sha256": "10d30a673cd5e9349bdc02aeb48f14b3386d27d0da32df8f0a555d4aa16aa551",
+      "bytes": 10818,
+      "file": "upstream/aclysma--profiling--8271551172eb6fa4cba47369aedd93790c623df9--LICENSE-APACHE",
+      "crate_names": [
+        "profiling"
+      ],
+      "crate_commit": "8271551172eb6fa4cba47369aedd93790c623df9",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/gfx-rs/rspirv",
+      "commit": "8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4",
+      "source_path": "LICENSE",
+      "contents_url": "https://api.github.com/repos/gfx-rs/rspirv/contents/LICENSE?ref=8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4",
+      "raw_url": "https://raw.githubusercontent.com/gfx-rs/rspirv/8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4/LICENSE",
+      "git_blob_sha1": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358,
+      "file": "upstream/gfx-rs--rspirv--8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4--LICENSE",
+      "crate_names": [
+        "spirv"
+      ],
+      "crate_commit": "8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4",
+      "scope": "repository root legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/google/angle",
+      "commit": "7403dd2cd3764fe96660fe09892e764e9ae1dbca",
+      "source_path": "LICENSE",
+      "contents_url": "https://api.github.com/repos/google/angle/contents/LICENSE?ref=7403dd2cd3764fe96660fe09892e764e9ae1dbca",
+      "raw_url": "https://raw.githubusercontent.com/google/angle/7403dd2cd3764fe96660fe09892e764e9ae1dbca/LICENSE",
+      "git_blob_sha1": "0f65fd60fd68d465a2283378849f16532f5ee4f1",
+      "sha256": "bf4da21bd20bcfb5b60b7ecc67fa864a79be049e21d6178076887f178dd6c71a",
+      "bytes": 1643,
+      "file": "upstream/google--angle--7403dd2cd3764fe96660fe09892e764e9ae1dbca--LICENSE",
+      "crate_names": [
+        "khronos_api"
+      ],
+      "crate_commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+      "scope": "submodule legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/KhronosGroup/SPIRV-Headers",
+      "commit": "04f10f650d514df88b76d25e83db360142c7b174",
+      "source_path": "LICENSE",
+      "contents_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/contents/LICENSE?ref=04f10f650d514df88b76d25e83db360142c7b174",
+      "raw_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/04f10f650d514df88b76d25e83db360142c7b174/LICENSE",
+      "git_blob_sha1": "a63e9c620ee123267192113ab0be3814782ba909",
+      "sha256": "ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613",
+      "bytes": 23503,
+      "file": "upstream/KhronosGroup--SPIRV-Headers--04f10f650d514df88b76d25e83db360142c7b174--LICENSE",
+      "crate_names": [
+        "spirv"
+      ],
+      "crate_commit": "8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4",
+      "scope": "submodule legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/KhronosGroup/SPIRV-Headers",
+      "commit": "04f10f650d514df88b76d25e83db360142c7b174",
+      "source_path": "LICENSES/MIT.txt",
+      "contents_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/contents/LICENSES/MIT.txt?ref=04f10f650d514df88b76d25e83db360142c7b174",
+      "raw_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/04f10f650d514df88b76d25e83db360142c7b174/LICENSES/MIT.txt",
+      "git_blob_sha1": "fc2cf8e6b667b752cf62d1306521071db34c0a63",
+      "sha256": "6d7c9e9d7d12c8d3753bdb24417b84819ba4d6c2f025c37948113d86dc81eef9",
+      "bytes": 1087,
+      "file": "upstream/KhronosGroup--SPIRV-Headers--04f10f650d514df88b76d25e83db360142c7b174--LICENSES--MIT.txt",
+      "crate_names": [
+        "spirv"
+      ],
+      "crate_commit": "8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4",
+      "scope": "submodule legal texts; applicability pending"
+    },
+    {
+      "repository": "https://github.com/KhronosGroup/SPIRV-Headers",
+      "commit": "04f10f650d514df88b76d25e83db360142c7b174",
+      "source_path": "LICENSES/CC-BY-4.0.txt",
+      "contents_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/contents/LICENSES/CC-BY-4.0.txt?ref=04f10f650d514df88b76d25e83db360142c7b174",
+      "raw_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/04f10f650d514df88b76d25e83db360142c7b174/LICENSES/CC-BY-4.0.txt",
+      "git_blob_sha1": "13ca539f377dc705af32b8d2ce89262298ea2f06",
+      "sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744",
+      "bytes": 17023,
+      "file": "upstream/KhronosGroup--SPIRV-Headers--04f10f650d514df88b76d25e83db360142c7b174--LICENSES--CC-BY-4.0.txt",
+      "crate_names": [
+        "spirv"
+      ],
+      "crate_commit": "8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4",
+      "scope": "submodule legal texts; applicability pending"
+    }
+  ]
+}

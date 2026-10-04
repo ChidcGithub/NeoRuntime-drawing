@@ -1,0 +1,14 @@
+## License
+
+Usage is under the MIT license, available at
+<https://opensource.org/license/mit>.
+
+### Contribution
+
+Contributions are licensed under both the MIT license and the Apache License,
+Version 2.0, available at <https://www.apache.org/licenses/LICENSE-2.0>. Unless
+you explicitly state otherwise, any contribution intentionally submitted for
+inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as mentioned, without any additional terms or conditions.
+
+See [LICENSE.txt](LICENSE.txt) for full details.

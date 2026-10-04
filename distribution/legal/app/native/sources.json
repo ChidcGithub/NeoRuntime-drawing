@@ -1,0 +1,177 @@
+{
+  "review_date": "2026-10-04",
+  "hash_algorithm": "SHA-256 unless explicitly named otherwise",
+  "files": [
+    {
+      "path": "cache-evidence.json",
+      "bytes": 2022,
+      "sha256": "9cb41625a9c20ea58d017271321a5514625acecf0a24901668c4be63dc82e2d4",
+      "origin": "Generated review/evidence record; not a replacement for original licenses"
+    },
+    {
+      "path": "directml/LICENSE-CODE.txt",
+      "bytes": 1093,
+      "sha256": "903df5512f7d02609fed0c780a9b704f5a3eeb6e4d84ebe42a29845c81899a3c",
+      "origin": "Original official NuGet member; bytes unchanged",
+      "source_url": "https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/1.15.4/microsoft.ai.directml.1.15.4.nupkg",
+      "archive_member": "LICENSE-CODE.txt"
+    },
+    {
+      "path": "directml/LICENSE.txt",
+      "bytes": 10439,
+      "sha256": "a05138e3a085ff60a44881eedfa58dccb03ecc1d7b1f6ae888418e8c2fec4b8d",
+      "origin": "Original official NuGet member; bytes unchanged",
+      "source_url": "https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/1.15.4/microsoft.ai.directml.1.15.4.nupkg",
+      "archive_member": "LICENSE.txt"
+    },
+    {
+      "path": "directml/Microsoft.AI.DirectML.nuspec",
+      "bytes": 806,
+      "sha256": "6652bebe3cb8c22cf9152570819abdc4dfc897c08373271c3f00b0dfd637d9d5",
+      "origin": "Original official NuGet member; bytes unchanged",
+      "source_url": "https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/1.15.4/microsoft.ai.directml.1.15.4.nupkg",
+      "archive_member": "Microsoft.AI.DirectML.nuspec"
+    },
+    {
+      "path": "directml/nuget-evidence.json",
+      "bytes": 3594,
+      "sha256": "1ec68dae69b8b4e1c38aef556c85617b6a7c5c57d3612b7fe7bdac8c264067f6",
+      "origin": "Generated review/evidence record; not a replacement for original licenses"
+    },
+    {
+      "path": "directml/README.md",
+      "bytes": 346,
+      "sha256": "86e8e7c998791bc14d946044fa2feb9b5760b584cb4296fbd4fddadd35280a03",
+      "origin": "Original official NuGet member; bytes unchanged",
+      "source_url": "https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/1.15.4/microsoft.ai.directml.1.15.4.nupkg",
+      "archive_member": "README.md"
+    },
+    {
+      "path": "directml/ThirdPartyNotices.txt",
+      "bytes": 4577,
+      "sha256": "2c95795c13ff48a58b6ed916f37901c23d964b5d9d601af422f17ad2172e7950",
+      "origin": "Original official NuGet member; bytes unchanged",
+      "source_url": "https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/1.15.4/microsoft.ai.directml.1.15.4.nupkg",
+      "archive_member": "ThirdPartyNotices.txt"
+    },
+    {
+      "path": "onnxruntime/deps.txt",
+      "bytes": 6961,
+      "sha256": "468529b3ae2d75569da5002aa21d79f3e0a673ba12e5742ec77cd12fb7309510",
+      "origin": "Original upstream file bytes downloaded over HTTPS",
+      "source_url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.22.0/cmake/deps.txt"
+    },
+    {
+      "path": "onnxruntime/eigen.cmake",
+      "bytes": 421,
+      "sha256": "663b248776b2e7fd38063caa817016c0a6b477351d104141e3f5afae407f0ec2",
+      "origin": "Original upstream file bytes downloaded over HTTPS",
+      "source_url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.22.0/cmake/external/eigen.cmake"
+    },
+    {
+      "path": "onnxruntime/LICENSE",
+      "bytes": 1073,
+      "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+      "origin": "Original upstream file bytes downloaded over HTTPS",
+      "source_url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.22.0/LICENSE"
+    },
+    {
+      "path": "onnxruntime/symbol-evidence.json",
+      "bytes": 3766,
+      "sha256": "e6f715658e71613c0788917596e46caec43a83d1e77261c50d78496403bbef9b",
+      "origin": "Generated review/evidence record; not a replacement for original licenses"
+    },
+    {
+      "path": "onnxruntime/thirdparty-retrieval.json",
+      "bytes": 476,
+      "sha256": "a8899c8a111ae898393c258fcf9e674d3e262233e040e7e387e871076e3ac8eb",
+      "origin": "Generated review/evidence record; not a replacement for original licenses"
+    },
+    {
+      "path": "onnxruntime/ThirdPartyNotices.txt",
+      "bytes": 326866,
+      "sha256": "e9e90971a8e75a9a8ac0c6412e29c1202d079998389915aa485f46c816c3b4cc",
+      "origin": "Original upstream file decoded from official GitHub Contents API",
+      "source_url": "https://api.github.com/repos/microsoft/onnxruntime/contents/ThirdPartyNotices.txt?ref=v1.22.0",
+      "upstream_url": "https://github.com/microsoft/onnxruntime/blob/v1.22.0/ThirdPartyNotices.txt",
+      "git_blob_sha1": "7b2bbdd2094d14e40338c7645b25a78ae8cd5364"
+    },
+    {
+      "path": "ort-sys/.cargo_vcs_info.json",
+      "bytes": 101,
+      "sha256": "219726b2ce9fa6318652b07706e32c2a6e1ac1479bd6d1d28eb4e94ec97705ad",
+      "origin": "Original local crate bytes; manifest location obtained from successful Cargo metadata",
+      "source_url": "https://static.crates.io/crates/ort-sys/ort-sys-2.0.0-rc.10.crate",
+      "archive_member": "ort-sys-2.0.0-rc.10/.cargo_vcs_info.json",
+      "upstream_revision": "daf91046dc814d5aea61d24e0daf571c7df91930"
+    },
+    {
+      "path": "ort-sys/build-output.sanitized.txt",
+      "bytes": 2914,
+      "sha256": "c68771cf367636701ebfb9bd2fcfba508d1628cd48a9adedd05d32805e6afea2",
+      "origin": "Generated review/evidence record; not a replacement for original licenses"
+    },
+    {
+      "path": "ort-sys/build.rs",
+      "bytes": 27375,
+      "sha256": "c1e166d9f3025251e755ea98bbcce4e2e15d6cc19fd57afc5ef2951e2aca6995",
+      "origin": "Original local crate bytes; manifest location obtained from successful Cargo metadata",
+      "source_url": "https://static.crates.io/crates/ort-sys/ort-sys-2.0.0-rc.10.crate",
+      "archive_member": "ort-sys-2.0.0-rc.10/build.rs",
+      "upstream_revision": "daf91046dc814d5aea61d24e0daf571c7df91930"
+    },
+    {
+      "path": "ort-sys/dist.txt",
+      "bytes": 3234,
+      "sha256": "fb86c7652b69659ad3ec56acc39a59be3ed395bd4a89a3e4430e219333127219",
+      "origin": "Original local crate bytes; manifest location obtained from successful Cargo metadata",
+      "source_url": "https://static.crates.io/crates/ort-sys/ort-sys-2.0.0-rc.10.crate",
+      "archive_member": "ort-sys-2.0.0-rc.10/dist.txt",
+      "upstream_revision": "daf91046dc814d5aea61d24e0daf571c7df91930"
+    },
+    {
+      "path": "ort-sys/LICENSE-APACHE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "origin": "Original local crate bytes; manifest location obtained from successful Cargo metadata",
+      "source_url": "https://static.crates.io/crates/ort-sys/ort-sys-2.0.0-rc.10.crate",
+      "archive_member": "ort-sys-2.0.0-rc.10/LICENSE-APACHE",
+      "upstream_revision": "daf91046dc814d5aea61d24e0daf571c7df91930"
+    },
+    {
+      "path": "ort-sys/LICENSE-MIT",
+      "bytes": 1107,
+      "sha256": "b880185add684cd1c6d24394a2e30fe08b75ba4586619b0890ce764bc4cd43a0",
+      "origin": "Original local crate bytes; manifest location obtained from successful Cargo metadata",
+      "source_url": "https://static.crates.io/crates/ort-sys/ort-sys-2.0.0-rc.10.crate",
+      "archive_member": "ort-sys-2.0.0-rc.10/LICENSE-MIT",
+      "upstream_revision": "daf91046dc814d5aea61d24e0daf571c7df91930"
+    },
+    {
+      "path": "pe-evidence.json",
+      "bytes": 72626,
+      "sha256": "158e086efc2e929806f3be93a97b09ea0e9fe91d7d653625040f75782a69c719",
+      "origin": "Generated review/evidence record; not a replacement for original licenses"
+    },
+    {
+      "path": "PROVENANCE.md",
+      "bytes": 13051,
+      "sha256": "861991b8fc37500937f5de52d86a7e7c082c04d6c582f90bd9af4db9d4bf7bad",
+      "origin": "Generated review/evidence record; not a replacement for original licenses"
+    }
+  ],
+  "additional_retrievals": [
+    {
+      "source_url": "https://api.github.com/repos/pykeio/ort/git/trees/daf91046dc814d5aea61d24e0daf571c7df91930?recursive=1",
+      "response_sha256": "d0125ffb5b9a8d77c4144267497c40daed8d001fca01c1ce0ecbec255e72fb5a",
+      "tree_sha": "daf91046dc814d5aea61d24e0daf571c7df91930",
+      "truncated": false,
+      "note": "Repository-tree discovery only; not native archive source/build attestation"
+    }
+  ],
+  "limitations": [
+    "Pyke TGZ expected hash from dist.txt is not a measured download hash",
+    "Upstream Eigen source archive is not fetched or tied to Pyke artifact",
+    "Official NuGet signature not independently verified"
+  ]
+}

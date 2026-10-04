@@ -1,0 +1,70 @@
+{
+  "status": "BLOCKED",
+  "evidence": "Allowlisted values from local manifest; not a new conversion, artifact verification or accuracy evaluation",
+  "manifest_sha256": "61565063571e6c75f7e44879fd358dff9a5a4f28e0f51f58e97f8405c82a13a8",
+  "manifest_bytes": 1347,
+  "conversion": {
+    "format": "texteller-dynamic-int8-v1",
+    "source_revision": "7b96df06b9d81cdb129c3bef68b7250bc3e2b0ea",
+    "tools": {
+      "onnx": "1.18.0",
+      "onnxruntime": "1.22.0"
+    },
+    "operators": [
+      "MatMul",
+      "Gemm"
+    ],
+    "weight_type": "QInt8",
+    "per_channel": true,
+    "reduce_range": true,
+    "quality_validated": false,
+    "files": {
+      "encoder_model.onnx": {
+        "source_sha256": "071afc0a0c92b2ee3847612127eb9e82b1c39413725e692f4405e5ea9e265bf0",
+        "sha256": "6d1daf6052c879e0fba9b0a282c2720ddd03b7642063f38392db03d78123d0cb",
+        "bytes": 89332035,
+        "dynamic_quantization_nodes": 120
+      },
+      "decoder_model.onnx": {
+        "source_sha256": "288cb8e37cdda66f725f2739efd2e7846636666a815e27533891c68389ec3659",
+        "sha256": "28a6b9d60644d6b2e3280593dc985456c2db71bbd4e86f69585d385801a651a8",
+        "bytes": 278733527,
+        "dynamic_quantization_nodes": 195
+      },
+      "generation_config.json": {
+        "sha256": "dce3cbe591ed7fc9d9ea9c588697e9e3a05248446343cf1682df309c013d5ab7",
+        "bytes": 154
+      },
+      "config.json": {
+        "sha256": "ae1df4b712a25df6cbf0441d0e5602cee139f3f371c1b3555274db7aed2c0135",
+        "bytes": 4504
+      },
+      "tokenizer.json": {
+        "sha256": "3fd70ac72edab8213b7dd13271b3c69b6c2252ab3e04f8045939dad0847309be",
+        "bytes": 1044328
+      }
+    }
+  },
+  "script_observed_options": {
+    "method": "onnxruntime.quantization.quantize_dynamic",
+    "MatMulConstBOnly": true,
+    "use_external_data_format": false
+  },
+  "local_input_fingerprints": [
+    {
+      "path": "crates/board-hwr/prepare_texteller_int8.py",
+      "bytes": 7652,
+      "sha256": "d6e8454ead25a0097f37a4d611290aba9b4cb626b583f9de4de127ef0cb083ff"
+    },
+    {
+      "path": "crates/board-hwr/download_texteller.py",
+      "bytes": 4877,
+      "sha256": "5f86f8e49dc6212d6fe8efe5f3208419f6fda790342738642a83562bb0c8ba25"
+    },
+    {
+      "path": "crates/board-hwr/requirements-quantize.txt",
+      "bytes": 186,
+      "sha256": "b6e01891d5414005dec246dcfe653d2bf32106325dc0671e1a581923e298e9d5"
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "source_url": "https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/1.15.4/microsoft.ai.directml.1.15.4.nupkg",
+  "package_sha256": "4e7cb7ddce8cf837a7a75dc029209b520ca0101470fcdf275c1f49736a3615b9",
+  "package_bytes": 202292617,
+  "member": "bin/x64-win/DirectML.dll",
+  "member_sha256": "9c9e6d822561c6c41b90e6994b3e8857cf1d66dbfb1e0c4c799c7c89b4e92da1",
+  "release_dll_sha256": "9c9e6d822561c6c41b90e6994b3e8857cf1d66dbfb1e0c4c799c7c89b4e92da1",
+  "identical": true,
+  "extracted_original_texts": [
+    {
+      "path": "LICENSE.txt",
+      "sha256": "a05138e3a085ff60a44881eedfa58dccb03ecc1d7b1f6ae888418e8c2fec4b8d"
+    },
+    {
+      "path": "LICENSE-CODE.txt",
+      "sha256": "903df5512f7d02609fed0c780a9b704f5a3eeb6e4d84ebe42a29845c81899a3c"
+    },
+    {
+      "path": "ThirdPartyNotices.txt",
+      "sha256": "2c95795c13ff48a58b6ed916f37901c23d964b5d9d601af422f17ad2172e7950"
+    },
+    {
+      "path": "Microsoft.AI.DirectML.nuspec",
+      "sha256": "6652bebe3cb8c22cf9152570819abdc4dfc897c08373271c3f00b0dfd637d9d5"
+    },
+    {
+      "path": "README.md",
+      "sha256": "86e8e7c998791bc14d946044fa2feb9b5760b584cb4296fbd4fddadd35280a03"
+    }
+  ],
+  "package_members": [
+    "_rels/.rels",
+    "Microsoft.AI.DirectML.nuspec",
+    "bin/arm-win/DirectML.lib",
+    "bin/arm64-win/DirectML.dll",
+    "bin/arm64ec-win/DirectML.Debug.dll",
+    "bin/arm64ec-win/DirectML.lib",
+    "bin/x64-win/DirectML.Debug.dll",
+    "bin/x64-win/DirectML.lib",
+    "bin/x64-xbox-scarlett-230307/DirectML.Debug.pdb",
+    "bin/x64-xbox-scarlett-230307/DirectML.pdb",
+    "bin/x64-xbox-scarlett-230603/DirectML.dll",
+    "bin/x64-xbox-scarlett-231000/DirectML.Debug.dll",
+    "bin/x64-xbox-scarlett-231000/DirectML.lib",
+    "bin/x86-win/DirectML.Debug.pdb",
+    "bin/x86-win/DirectML.pdb",
+    "build/Microsoft.AI.DirectML.targets",
+    "LICENSE-CODE.txt",
+    "ThirdPartyNotices.txt",
+    "bin/arm-win/DirectML.pdb",
+    "bin/arm64-win/DirectML.lib",
+    "bin/arm64ec-win/DirectML.Debug.pdb",
+    "bin/arm64ec-win/DirectML.pdb",
+    "bin/x64-win/DirectML.Debug.pdb",
+    "bin/x64-win/DirectML.pdb",
+    "bin/x64-xbox-scarlett-230307/DirectML.dll",
+    "bin/x64-xbox-scarlett-230603/DirectML.Debug.dll",
+    "bin/x64-xbox-scarlett-230603/DirectML.lib",
+    "bin/x64-xbox-scarlett-231000/DirectML.Debug.pdb",
+    "bin/x64-xbox-scarlett-231000/DirectML.pdb",
+    "bin/x86-win/DirectML.dll",
+    "build/Microsoft.AI.DirectML.props",
+    "include/DirectML.h",
+    "LICENSE.txt",
+    "bin/arm-win/DirectML.Debug.dll",
+    "bin/arm64-win/DirectML.Debug.dll",
+    "bin/arm64-win/DirectML.pdb",
+    "bin/arm64ec-win/DirectML.dll",
+    "bin/x64-linux/libdirectml.so",
+    "bin/x64-win/DirectML.dll",
+    "bin/x64-xbox-scarlett-230307/DirectML.Debug.dll",
+    "bin/x64-xbox-scarlett-230307/DirectML.lib",
+    "bin/x64-xbox-scarlett-230603/DirectML.Debug.pdb",
+    "bin/x64-xbox-scarlett-230603/DirectML.pdb",
+    "bin/x64-xbox-scarlett-231000/DirectML.dll",
+    "bin/x86-win/DirectML.Debug.dll",
+    "bin/x86-win/DirectML.lib",
+    "build/Microsoft.AI.DirectML.Rules.Project.xml",
+    "include/DirectMLConfig.h",
+    "bin/arm-win/DirectML.Debug.pdb",
+    "bin/arm64-win/DirectML.Debug.pdb",
+    "README.md",
+    "bin/arm-win/DirectML.dll",
+    "[Content_Types].xml",
+    "package/services/metadata/core-properties/59a9638380d245e5a42ad8872e31997d.psmdcp",
+    ".signature.p7s"
+  ],
+  "verification": "HTTPS download from official NuGet endpoint; SHA-256 comparison; no independent NuGet signature verification"
+}

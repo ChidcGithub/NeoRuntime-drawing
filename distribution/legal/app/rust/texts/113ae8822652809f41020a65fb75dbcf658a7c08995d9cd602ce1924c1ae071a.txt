@@ -1,0 +1,8 @@
+## License
+
+The same as used by [Skia]: [New BSD License](./LICENSE)
+
+[Skia]: https://skia.org/
+[cairo]: https://www.cairographics.org/
+[raqote]: https://github.com/jrmuizel/raqote
+[resvg]: https://github.com/RazrFalcon/resvg

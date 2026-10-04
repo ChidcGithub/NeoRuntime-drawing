@@ -1,0 +1,255 @@
+{
+  "note": "Selected entries from complete non-truncated fixed-commit GitHub trees; not a full repository tree or SBOM",
+  "trees": [
+    {
+      "url": "https://api.github.com/repos/emilk/egui/git/trees/49682f8baa058bf49e011035cfbd6e825f88a5ef?recursive=1",
+      "commit": "49682f8baa058bf49e011035cfbd6e825f88a5ef",
+      "response_sha256": "7ad6f1e58707b9c8f0f45d300763fd86ea796a35a0cb9d089e14fcf0acc750a6",
+      "truncated": false,
+      "entries": [
+        {
+          "path": "LICENSE-APACHE",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "11069edd79019f7dafbe3138841cf289209270dd",
+          "size": 10850,
+          "url": "https://api.github.com/repos/emilk/egui/git/blobs/11069edd79019f7dafbe3138841cf289209270dd"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9",
+          "size": 1092,
+          "url": "https://api.github.com/repos/emilk/egui/git/blobs/673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9"
+        },
+        {
+          "path": "crates/epaint_default_fonts/fonts/emoji-icon-font-mit-license.txt",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "99016e120b21a6c77e3388d415968eaf6b504b4a",
+          "size": 1069,
+          "url": "https://api.github.com/repos/emilk/egui/git/blobs/99016e120b21a6c77e3388d415968eaf6b504b4a"
+        }
+      ]
+    },
+    {
+      "url": "https://api.github.com/repos/AccessKit/accesskit/git/trees/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969?recursive=1",
+      "commit": "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+      "response_sha256": "7f2c300cb45695eaf2e47acc42dd844e1a5a4ae6e3dfb250ffac57f9981853ae",
+      "truncated": false,
+      "entries": [
+        {
+          "path": "LICENSE-APACHE",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d",
+          "size": 9723,
+          "url": "https://api.github.com/repos/AccessKit/accesskit/git/blobs/1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "31aa79387f27e730e33d871925e152e35e428031",
+          "size": 1023,
+          "url": "https://api.github.com/repos/AccessKit/accesskit/git/blobs/31aa79387f27e730e33d871925e152e35e428031"
+        },
+        {
+          "path": "LICENSE.chromium",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "a32e00ce6be3620adca152e53734f7de8fda38cf",
+          "size": 1559,
+          "url": "https://api.github.com/repos/AccessKit/accesskit/git/blobs/a32e00ce6be3620adca152e53734f7de8fda38cf"
+        }
+      ]
+    },
+    {
+      "url": "https://api.github.com/repos/AccessKit/accesskit/git/trees/1bbcf100942bac96c2c3a4a91cb67b0b20201a24?recursive=1",
+      "commit": "1bbcf100942bac96c2c3a4a91cb67b0b20201a24",
+      "response_sha256": "c31053c32ebf536c68d8132c037e0f7fe103a4f7c00d52905810fdd7ccbd5b01",
+      "truncated": false,
+      "entries": [
+        {
+          "path": "LICENSE-APACHE",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d",
+          "size": 9723,
+          "url": "https://api.github.com/repos/AccessKit/accesskit/git/blobs/1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "31aa79387f27e730e33d871925e152e35e428031",
+          "size": 1023,
+          "url": "https://api.github.com/repos/AccessKit/accesskit/git/blobs/31aa79387f27e730e33d871925e152e35e428031"
+        },
+        {
+          "path": "LICENSE.chromium",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "a32e00ce6be3620adca152e53734f7de8fda38cf",
+          "size": 1559,
+          "url": "https://api.github.com/repos/AccessKit/accesskit/git/blobs/a32e00ce6be3620adca152e53734f7de8fda38cf"
+        }
+      ]
+    },
+    {
+      "url": "https://api.github.com/repos/DoumanAsh/clipboard-win/git/trees/3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342?recursive=1",
+      "commit": "3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342",
+      "response_sha256": "0b6097c58415f2c78356711b3c3e3bf91c86903af10ab62563e886d9cad3a84a",
+      "truncated": false,
+      "entries": [
+        {
+          "path": "LICENSE",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "36b7cd93cdfbac762f5be4c6ce276df2ea6305c2",
+          "size": 1338,
+          "url": "https://api.github.com/repos/DoumanAsh/clipboard-win/git/blobs/36b7cd93cdfbac762f5be4c6ce276df2ea6305c2"
+        }
+      ]
+    },
+    {
+      "url": "https://api.github.com/repos/brendanzab/gl-rs/git/trees/ea503e8d5fb6d73c6030e6191ce738cd3bf3433e?recursive=1",
+      "commit": "ea503e8d5fb6d73c6030e6191ce738cd3bf3433e",
+      "response_sha256": "9c01dacc3c5622397895cf4d6db860789929fc29477654b4df8208154b028839",
+      "truncated": false,
+      "entries": [
+        {
+          "path": "LICENSE",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+          "size": 11358,
+          "url": "https://api.github.com/repos/rust-windowing/gl-rs/git/blobs/d645695673349e3947e8e5ae42332d0ac3164cd7"
+        },
+        {
+          "path": "khronos_api/api",
+          "mode": "160000",
+          "type": "commit",
+          "sha": "85d924a5165e7206f4c73c8c10307658dc2bbe10"
+        },
+        {
+          "path": "khronos_api/api_angle",
+          "mode": "160000",
+          "type": "commit",
+          "sha": "7403dd2cd3764fe96660fe09892e764e9ae1dbca"
+        },
+        {
+          "path": "khronos_api/api_egl",
+          "mode": "160000",
+          "type": "commit",
+          "sha": "b6b558e7042d67fc7543383bb0e13a075f21d8ab"
+        },
+        {
+          "path": "khronos_api/api_webgl",
+          "mode": "160000",
+          "type": "commit",
+          "sha": "c987f075bfdca44119175c41f547d849c08983a3"
+        }
+      ]
+    },
+    {
+      "url": "https://api.github.com/repos/brendanzab/gl-rs/git/trees/f150967b1c44ae888e6676f93f639ebc82771bdc?recursive=1",
+      "commit": "f150967b1c44ae888e6676f93f639ebc82771bdc",
+      "response_sha256": "34ec9b22b326ed2a957f9257aeeb2ef3e2835cd1d42e8684ac32820c1e3dfcd2",
+      "truncated": false,
+      "entries": [
+        {
+          "path": "LICENSE",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+          "size": 11358,
+          "url": "https://api.github.com/repos/rust-windowing/gl-rs/git/blobs/d645695673349e3947e8e5ae42332d0ac3164cd7"
+        },
+        {
+          "path": "khronos_api/api",
+          "mode": "160000",
+          "type": "commit",
+          "sha": "85d924a5165e7206f4c73c8c10307658dc2bbe10"
+        },
+        {
+          "path": "khronos_api/api_angle",
+          "mode": "160000",
+          "type": "commit",
+          "sha": "7403dd2cd3764fe96660fe09892e764e9ae1dbca"
+        },
+        {
+          "path": "khronos_api/api_egl",
+          "mode": "160000",
+          "type": "commit",
+          "sha": "b6b558e7042d67fc7543383bb0e13a075f21d8ab"
+        },
+        {
+          "path": "khronos_api/api_webgl",
+          "mode": "160000",
+          "type": "commit",
+          "sha": "c987f075bfdca44119175c41f547d849c08983a3"
+        }
+      ]
+    },
+    {
+      "url": "https://api.github.com/repos/aclysma/profiling/git/trees/8271551172eb6fa4cba47369aedd93790c623df9?recursive=1",
+      "commit": "8271551172eb6fa4cba47369aedd93790c623df9",
+      "response_sha256": "9e0d31d55de8d192f3418f1f4facf8009957c48ae5062d38e710de34884ea4f1",
+      "truncated": false,
+      "entries": [
+        {
+          "path": "LICENSE-APACHE",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "139dce95d473c201a8561ef17536314d8b8cda65",
+          "size": 10818,
+          "url": "https://api.github.com/repos/aclysma/profiling/git/blobs/139dce95d473c201a8561ef17536314d8b8cda65"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "6a84e059ad8b43e03c2b06bc2af4dc1d8442808d",
+          "size": 1093,
+          "url": "https://api.github.com/repos/aclysma/profiling/git/blobs/6a84e059ad8b43e03c2b06bc2af4dc1d8442808d"
+        }
+      ]
+    },
+    {
+      "url": "https://api.github.com/repos/gfx-rs/rspirv/git/trees/8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4?recursive=1",
+      "commit": "8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4",
+      "response_sha256": "b370d17fede5eb040594790a2533e19ecea5786f41d400178ab633dc0371f14a",
+      "truncated": false,
+      "entries": [
+        {
+          "path": "LICENSE",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+          "size": 11358,
+          "url": "https://api.github.com/repos/gfx-rs/rspirv/git/blobs/d645695673349e3947e8e5ae42332d0ac3164cd7"
+        },
+        {
+          "path": "autogen/external/SPIRV-Headers",
+          "mode": "160000",
+          "type": "commit",
+          "sha": "04f10f650d514df88b76d25e83db360142c7b174"
+        }
+      ]
+    }
+  ],
+  "gitmodules": [
+    {
+      "url": "https://raw.githubusercontent.com/brendanzab/gl-rs/f150967b1c44ae888e6676f93f639ebc82771bdc/.gitmodules",
+      "sha256": "6024f0df9ac9609199b69ec9bbaf3e37a73f93f306336b6ab832f63a1df4288b",
+      "verbatim": "[submodule \"khronos_api/api\"]\n\tpath = khronos_api/api\n\turl = https://github.com/KhronosGroup/OpenGL-Registry.git\n[submodule \"khronos_api/api_egl\"]\n\tpath = khronos_api/api_egl\n\turl = https://github.com/KhronosGroup/EGL-Registry.git\n[submodule \"khronos_api/api_webgl\"]\n\tpath = khronos_api/api_webgl\n\turl = https://github.com/KhronosGroup/WebGL.git\n[submodule \"khronos_api/api_angle\"]\n\tpath = khronos_api/api_angle\n\turl = https://github.com/google/angle.git\n"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/gfx-rs/rspirv/8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4/.gitmodules",
+      "sha256": "47eb23ce3bf3c8d05e030f186a9170f337150232e61e2aed98d70973a1f564cf",
+      "verbatim": "[submodule \"autogen/external/SPIRV-Headers\"]\n\tpath = autogen/external/SPIRV-Headers\n\turl = https://github.com/KhronosGroup/SPIRV-Headers.git\n"
+    }
+  ]
+}

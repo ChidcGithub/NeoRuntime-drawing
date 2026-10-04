@@ -1,0 +1,11 @@
+## Attribution and Thanks
+
+- Thanks to my God and Father who led me through figuring this out and to whome I owe everything.
+- Thanks to @Yandros on the Rust forum for [showing me][sm] some crazy macro hacks!
+- Thanks to @sfackler for [pointing out][po] the way to make cargo add the cfg flags.
+- Thanks to the authors of the [`tectonic_cfg_support::target_cfg`] macro from which most of the cfg attribute parsing logic is taken from. Also thanks to @ratmice for [bringing it up][bip] on the Rust forum.
+
+[`tectonic_cfg_support::target_cfg`]: https://docs.rs/tectonic_cfg_support/0.0.1/src/tectonic_cfg_support/lib.rs.html#166-298
+[po]: https://users.rust-lang.org/t/any-such-thing-as-cfg-aliases/40100/2
+[bip]: https://users.rust-lang.org/t/any-such-thing-as-cfg-aliases/40100/13
+[sm]: https://users.rust-lang.org/t/any-such-thing-as-cfg-aliases/40100/3

@@ -1,0 +1,12 @@
+## License
+
+[MIT](https://github.com/rapidfuzz/strsim-rs/blob/main/LICENSE)
+
+[string similarity metrics]:http://en.wikipedia.org/wiki/String_metric
+[Damerau-Levenshtein]:http://en.wikipedia.org/wiki/Damerau%E2%80%93Levenshtein_distance
+[Jaro and Jaro-Winkler]:http://en.wikipedia.org/wiki/Jaro%E2%80%93Winkler_distance
+[Levenshtein]:http://en.wikipedia.org/wiki/Levenshtein_distance
+[Hamming]:http://en.wikipedia.org/wiki/Hamming_distance
+[Optimal string alignment]:https://en.wikipedia.org/wiki/Damerau%E2%80%93Levenshtein_distance#Optimal_string_alignment_distance
+[Sørensen-Dice]:http://en.wikipedia.org/wiki/S%C3%B8rensen%E2%80%93Dice_coefficient
+[Docker]:https://docs.docker.com/engine/installation/
