@@ -45,13 +45,13 @@ jobs:
           git rev-parse HEAD > .ci-reports/commit.txt
       - name: Test preparation and packaging tools
         run: |
-          python -m unittest discover -s crates/board-hwr -p test_prepare_texteller_int8.py -v > .ci-reports/python-prepare.txt 2>&1
-          python -m unittest discover -s crates/board-hwr/examples -p test_neural_benchmark_runner.py -v > .ci-reports/python-benchmark.txt 2>&1
-          python -m unittest discover -s scripts -p test_package_candidate.py -v > .ci-reports/python-package.txt 2>&1
+          python -m unittest discover -s crates/board-hwr -p test_prepare_texteller_int8.py -v 2>&1 | tee .ci-reports/python-prepare.txt
+          python -m unittest discover -s crates/board-hwr/examples -p test_neural_benchmark_runner.py -v 2>&1 | tee .ci-reports/python-benchmark.txt
+          python -m unittest discover -s scripts -p test_package_candidate.py -v 2>&1 | tee .ci-reports/python-package.txt
       - name: Run windowless workspace tests
-        run: cargo +1.97.1 test --workspace --locked > .ci-reports/workspace-tests.txt 2>&1
+        run: cargo +1.97.1 test --workspace --locked 2>&1 | tee .ci-reports/workspace-tests.txt
       - name: Build Windows applications
-        run: cargo +1.97.1 build --release -p neo-drawing -p neo-blackboard --locked > .ci-reports/build.txt 2>&1
+        run: cargo +1.97.1 build --release -p neo-drawing -p neo-blackboard --locked 2>&1 | tee .ci-reports/build.txt
       - name: Verify version without opening windows
         run: |
           target/release/neo-drawing.exe --version 2> .ci-reports/drawing-version.txt
@@ -72,6 +72,7 @@ jobs:
         with:
           name: windows-app-reports-${{ github.run_id }}-${{ github.run_attempt }}
           path: .ci-reports/
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
       - name: Upload approved application candidate

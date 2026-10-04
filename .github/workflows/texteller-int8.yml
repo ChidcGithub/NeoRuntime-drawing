@@ -43,8 +43,8 @@ jobs:
           git rev-parse HEAD > .ci-reports/commit.txt
       - name: Test conversion guards
         run: |
-          python -m unittest discover -s crates/board-hwr -p test_prepare_texteller_int8.py -v > .ci-reports/converter-tests.txt 2>&1
-          python -m unittest discover -s scripts -p test_package_candidate.py -v > .ci-reports/package-tests.txt 2>&1
+          python -m unittest discover -s crates/board-hwr -p test_prepare_texteller_int8.py -v 2>&1 | tee .ci-reports/converter-tests.txt
+          python -m unittest discover -s scripts -p test_package_candidate.py -v 2>&1 | tee .ci-reports/package-tests.txt
       - name: Download and verify pinned FP32 weights
         timeout-minutes: 30
         run: python crates/board-hwr/download_texteller.py --dir models/texteller
@@ -57,7 +57,7 @@ jobs:
         run: |
           rustup toolchain install 1.97.1 --profile minimal --target x86_64-pc-windows-msvc
           rustc +1.97.1 --version --verbose > .ci-reports/toolchain.txt
-          cargo +1.97.1 build -p board-hwr --example neural_benchmark --release --locked > .ci-reports/benchmark-build.txt 2>&1
+          cargo +1.97.1 build -p board-hwr --example neural_benchmark --release --locked 2>&1 | tee .ci-reports/benchmark-build.txt
       - name: Measure matched FP32 and INT8 inputs in separate processes
         timeout-minutes: 18
         run: |
@@ -81,6 +81,7 @@ jobs:
         with:
           name: int8-preparation-reports-${{ github.run_id }}-${{ github.run_attempt }}
           path: .ci-reports/
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
       - name: Upload approved model candidate
