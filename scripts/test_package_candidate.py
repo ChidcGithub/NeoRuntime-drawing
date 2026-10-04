@@ -379,7 +379,10 @@ class CandidateTests(unittest.TestCase):
         self.assert_no_output()
 
     def test_link_metadata_rejected_without_symlink_privileges(self):
-        path = self.source / package.APP_FILES[0]
+        # Windows runners can expose TEMP through its 8.3 alias; the packager
+        # resolves the parent before reaching the selected file. Compare the
+        # same canonical path without resolving inside the patched lstat.
+        path = (self.source / package.APP_FILES[0]).resolve()
         original = Path.lstat
         for mode, attributes in ((stat.S_IFLNK | 0o777, 0), (stat.S_IFREG | 0o644, 0x400)):
             def injected(candidate, *args, mode=mode, attributes=attributes, **kwargs):
