@@ -165,8 +165,7 @@ fn erase_preview_reuses_distant_operations_and_matches_full_path() {
         preview.update(&points);
         assert_eq!(
             before,
-            serde_json::to_value(&preview.result.as_ref().unwrap().as_ref().unwrap().1)
-                .unwrap()
+            serde_json::to_value(&preview.result.as_ref().unwrap().as_ref().unwrap().1).unwrap()
         );
     }
     assert_eq!(document, original);

@@ -90,21 +90,41 @@ Drawing has no mathematics panel. Blackboard supports manual calculation, result
 
 - Exact constant arithmetic supports bounded fractions and square roots; other supported constant operations may return approximate results. Polynomial algebra, equations, and numerical searches have separate limits and may use floating-point arithmetic.
 - `simplify`, `diff`, and `integrate` cover limited polynomials, not a full computer algebra system. GUI root, intersection, and quadratic-system searches are bounded: no candidate does not mean no solution.
-- Implicit plots support single x/y polynomial equations with numeric coefficients and total degree at most two. Arbitrary implicit, higher-degree, and parametric plots are unsupported; implicit/mixed-plot intersection search is not supported.
+- Implicit plots support single x/y polynomial equations with numeric coefficients and total degree at most two. Arbitrary implicit, higher-degree, and parametric plots are unsupported.
+- Plot **求点** supports straight lines (`y=2x+1`, `f(x)=2x+1`, `y-x=1`, and manually plotted `x=2`), their coordinate-axis intersections, and mixtures with supported explicit functions. Parallel lines have no pairwise point; coincident lines sharing a segment within the rectangle report non-discrete intersections, while contact at only one rectangle corner returns that single point. Line/line formulas are analytic but use **f64 floating-point**, not exact arithmetic; vertical-line/explicit pairs evaluate at the fixed x, while other explicit pairs retain bounded numerical search with residual checks against both original expressions. Boundary clipping absorbs at most four ULPs of rounding and rechecks any clamped point at machine-precision scale; it does not expand the rectangle by the root-finding tolerance. General implicit quadratics remain unsupported for intersections: any unsupported curve among the inspected first 16 prevents the whole-plot search, not just that curve's pairs. Larger plots receive a limit diagnostic. No RPC or `math.calculate` scope is added.
 - **Handwriting recognition is off by default.** Enabling it allows a 2.5-second writing pause to trigger recognition only. Review or manually correct the candidate, then click its calculate or plot icon. Recognition does not automatically calculate, plot, or write back.
 - The default offline template recognizer is limited, with explicit personal-template learning/save/load. Optional TexTeller recognition uses local Rust/ONNX Runtime inference and separately prepared models. Select its backend, provide an absolute model directory, and explicitly load it; the GUI does not download or automatically load models.
-- Low-memory CPU use: prepare a separate dynamic INT8 model directory with the [offline converter](crates/board-hwr/prepare_texteller_int8.py). Local synthetic benchmarks reduced model-process peak working set from about 1.3 GiB to 0.48 GiB; this is **not** full-GUI or i5/3 GB whole-machine acceptance. See [setup, measurements, and limitations](api/MODELS.md#low-memory-cpu-preparation). The GUI provides model unloading and prevents overlapping reload/inference residency.
+- Low-memory CPU use: prepare a separate dynamic INT8 model directory with the [offline converter](crates/board-hwr/prepare_texteller_int8.py). Local synthetic benchmarks reduced model-process peak working set from about 1.3 GiB to 0.48 GiB; this is **not** full-GUI or i5/3 GB whole-machine acceptance. Setup and measurement notes are kept in the local-only `api/MODELS.md`, which is not included in public checkouts. The GUI provides model unloading and prevents overlapping reload/inference residency.
 - The optional [model preparation script](crates/board-hwr/download_texteller.py) requires Python and network access and downloads approximately 1.25 GB. This is a separate opt-in action, not part of the source release or ordinary drawing setup. Model and runtime licensing must be reviewed separately before redistribution.
 
 Recognition candidates are held in memory and can become invalid after source or nearby-content edits. Successful calculation preserves the original ink and adds a result as one undo step. Recognition scores are not correctness guarantees.
+
+### Personal handwritten answers (experimental)
+
+In Blackboard's mathematics panel, expand **个人笔迹答案（实验性）**. Personal style learning and answers are **enabled by default**, independently of handwriting recognition: learning works with HWR **Off**, which remains its default. The enabled setting is session-only and returns to the default on restart. Calculating or inserting a result still requires an explicit click.
+
+- While enabled, fresh, successfully committed local **`Tool::Pen` strokes** can update numeric style statistics without labels, confirmation, or prior manual samples. A bounded window of **31 numeric observations**, rolling medians, and capped exponentially weighted moving averages (EWMA) estimate pen width, slant, aspect, and speed. Only numeric statistics are retained by automatic learning, not unlabeled stroke examples. The writing-like-stroke filter is heuristic: it cannot reliably distinguish every diagram stroke from handwriting. This is not character recognition or automatic character segmentation, and does not learn an exact alphabet or clone unseen Chinese characters.
+- Imports, old documents, host operations, undo/redo, and generated answers do not feed automatic learning. Generated glyphs/output are not stored as profile examples. This feature adds no neural models, model training/downloads, cloud service, or network access.
+- Optional exact-glyph sampling is nested under **可选：精确字形采样**. Only this optional workflow requires a manually entered single non-whitespace, non-control character label; draw the sample and click **加入精确字形**, with no label-confirmation checkbox. The canvas uses **128×128 local coordinates**, displayed at **256×256**, with a top guide at **y=24** and baseline at **y=96**. GUI samples use constant pressure **1**, not native stylus pressure. Limits remain **96 characters**, **3 variants per character**, **65,536 total sample points**, and **16 strokes / 2,048 points per sample**.
+- Style statistics and optional samples stay in memory unless explicitly saved/loaded through a local JSON path (maximum **8 MiB**). Profile format **2** also reads format **1**; this is separate from document versions. Saving requires overwrite permission and loading requires confirmation to replace the in-memory profile; destructive-action confirmations remain. There is no automatic persistence, load, or profile-directory scan.
+- Preview generation and profile JSON I/O share one background slot, without a queue. Relevant context changes invalidate preview/load results; a valid preview reuses cached render meshes on idle frames without changing the document or learning statistics. **An authorized save writes the click-time profile snapshot in the background; closing the panel or editing the profile does not cancel an in-progress write.** Later edits are not included or automatically persisted.
+- Keyboard edits, Esc, and relevant setting changes take effect before already-ready background answers are accepted in the same frame; held input does not indefinitely block result draining. Sampling-area `Ctrl+Z` precedes document undo while a draft is active and text input is not focused.
+- Synthesized fraction bars and operators share a math axis; spacing includes clamped pen width and bounded miter joins. Lowercase `o` is smaller than `0`, and the hooked `x` differs from `×`; this improves readability without promising unambiguous recognition.
+- Only new **Math/Text answers from the local mathematics worker** are eligible; host Agent write-back is not personalized. `render_adaptive` preserves optional exact samples and supplies missing characters from project-authored math templates and some extra procedural symbols, otherwise from an already explicitly loaded local font. Font glyphs are rasterized and skeletonized within **96×96 pixels**, then synthesized glyphs receive the style transform. The renderer performs no hidden filesystem font scans; the GUI's existing fixed Windows Chinese-font paths are unchanged. If a needed font/glyph is unavailable, a glyph is too complex, or a generation budget is exceeded, the **entire answer keeps standard rendering**, with a diagnostic—never partial handwriting mixed with standard output. Fraction bars, radical signs, and radical overbars remain procedural structural lines, not the user's traced glyphs.
+
+Font-derived skeletons (including failure results) are cached per loaded font generation, shared by its snapshots, with limits of **128 characters, 65,536 points, and 2 MiB of accounted entry payload**. The cache stores unstyled glyphs, not personal style; replacing the font starts a new generation, while outstanding snapshots can retain the old one.
+
+Each successful handwritten answer is **one object**: select, move, or delete it as a whole, with undo/redo. When selected, its standard text can be copied from the mathematics panel using **复制所选答案标准文字**. Saving and PNG/SVG export use frozen strokes; reopening or rendering the answer does not require the profile, and subsequent profile edits do not change existing answers. Each answer is limited to **4,096 UTF-8 text bytes, 1,024 strokes, and 32,768 points**. The frozen whole-answer object and v3 document format are unchanged. Font-derived centerlines approximate printed glyphs, not the original pen trajectory or stroke order. Complex Chinese output has not been visually tested; behavior on the real target machine and i5/3 GB performance or memory use are not guaranteed.
+
+**Privacy:** saved documents (including recovery saves) contain the personal strokes used in their answers, although they do **not** embed the whole profile. Copied or shared saved documents and exports disclose the rendered personal style. Treat documents, exports, and separately saved profile JSON as personal data before copying or sharing them.
 
 ## Documents, recovery, and limitations
 
 - Save/open and PNG import/export use explicit paths in the file panel. Exporting a page is neither a desktop screenshot nor a document save.
 - Unsaved changes require confirmation before exit or document replacement. Failed saves leave the document dirty.
-- Saved documents retain referenced images and connections, but not undo history or recognition candidates. The application reads document formats v1/v2; two-dimensional math objects require v2, which older v1-only readers cannot read. JSON Lines protocol version remains 1.
+- Saved documents retain referenced images and connections, but not undo history or recognition candidates. The application reads document formats v1/v2/v3: any handwritten answer requires v3; otherwise two-dimensional math objects require v2, and documents with neither use v1. Images only determine whether resources are packaged, not the version. Older v1/v2 readers cannot read v3 files; v1-only readers cannot read v2 files. JSON Lines protocol version remains 1, with no new RPC.
 - On disconnection, the application attempts a recovery save under `NeoRuntime-drawing/recovery` in `LOCALAPPDATA`, falling back to the system temporary directory. Paths or errors are reported to stderr. Recovery files are not reopened automatically, and disk failures can prevent recovery.
-- History, object counts, image resources, computation, and recognition are bounded. 3D shapes are projected wireframes, not solid models.
+- History, object counts, image resources, computation, and recognition are bounded. Committed pages use document-revision render caching; temporary gesture previews do not reuse the committed-content key. The page renderer's **64 MiB retained mesh-buffer budget is not a global RAM cap**: source snapshots, scenes, resources, submitted frames, and other application state are separate. GUI font-file reads are bounded to 64 MiB and validated before installation. 3D shapes are projected wireframes, not solid models.
 - PNG text export requires suitable fonts; missing images, fonts, or required glyphs cause errors. SVG without embedded font outlines depends on the viewer's fonts.
 - Native rendering, transparency, touch, pointer passthrough, multiple displays, clean-machine runtime requirements, and real Neo host integration are not fully validated. Equivalent Windows behavior is not promised on other platforms.
 
@@ -112,9 +132,25 @@ Recognition candidates are held in memory and can become invalid after source or
 
 - [Changelog: English and Chinese release notes](CHANGELOG.md)
 - [Source release procedure and distribution boundaries](RELEASING.md)
-- [Application and INT8 model build workflows](api/BUILD_PIPELINE.md) (manual; reports only by default)
-- [Communication protocol](api/PROTOCOL.md) and [API reference](api/DRAWING_API.md)
+- [Windows application workflow](.github/workflows/windows-app.yml) and [INT8 model workflow](.github/workflows/texteller-int8.yml) (manual; reports only by default)
 - [Drawing guide](drawing/README.md) and [Blackboard guide](blackboard/README.md)
+
+Protocol, API, model setup, and Neo integration handoffs are maintained in the local-only `api/` directory. They are intentionally excluded from current public checkouts; coordinate with the maintainer for integration documentation.
+
+### Repository layout
+
+| Path | Purpose |
+|---|---|
+| `drawing/`, `blackboard/` | Application entry points, guides, and integration tests |
+| `crates/` | Shared Rust libraries, unit tests, and handwriting-model tools |
+| `scripts/` | Packaging tools, license collection tooling, and packaging tests |
+| `.github/workflows/` | Manually triggered application and model build workflows |
+| `distribution/legal/` | Third-party notices, provenance, and review evidence; not a disposable cache |
+| `api/` | Local-only protocol and integration documentation (ignored) |
+| `models/` | Locally prepared model weights (ignored) |
+| `target/` | Generated Cargo build output (ignored) |
+
+Keep source, tests, and supporting tools together in their existing packages. Build output and Python `__pycache__/` directories are regenerable; downloaded models, local documents, and review evidence are not treated as disposable files.
 
 To run the default automated suite from the repository root:
 
@@ -122,7 +158,7 @@ To run the default automated suite from the repository root:
 cargo test --workspace --locked
 ```
 
-Ignored model, GPU, and performance tests require explicit execution. The last recorded result and its limits are documented in the changelog; neither automated tests nor a successful build establish complete native or distribution acceptance.
+Ignored model, GPU, and performance tests require explicit execution. The v0.0.1 test/build record in the changelog is historical, not validation of Unreleased changes. Native GUI checks of keyboard/result ordering, previews, handwriting readability, and straight-line 求点, plus target i5/3 GB performance and whole-machine memory measurements, remain pending; neither automated tests nor a successful build establish complete native or distribution acceptance.
 
 ## License
 

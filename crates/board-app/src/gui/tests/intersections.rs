@@ -5,7 +5,7 @@ fn implicit_mixed_intersection_ui_reports_unsupported_without_markers() {
     plot_frame(&mut app, &ctx, vec![]);
     drain_workers(&mut app);
     let shapes = plot_frame(&mut app, &ctx, vec![]);
-    assert!(shapes.contains("暂不支持隐式曲线"));
+    assert!(shapes.contains("仅支持显函数和仿射直线"));
     assert!(shapes.contains("未执行搜索"));
     assert!(
         app.plot_points
@@ -20,6 +20,31 @@ fn implicit_mixed_intersection_ui_reports_unsupported_without_markers() {
             .is_empty()
     );
     assert_eq!(app.session.document.current_page().objects.len(), 1);
+}
+
+#[test]
+fn affine_implicit_intersection_ui_supports_lines() {
+    for expression in ["y-x=1", "x=2", "2*y-2*x=2"] {
+        let (mut app, ctx) = plot_drag_app(vec![drag_plot("plot", 100.0, &["x^2", expression])]);
+        app.selected = Some("plot".into());
+        plot_frame(&mut app, &ctx, vec![]);
+        drain_workers(&mut app);
+        let shapes = plot_frame(&mut app, &ctx, vec![]);
+        assert!(!shapes.contains("未执行搜索"), "{expression}");
+        assert!(
+            !app.plot_points
+                .as_ref()
+                .unwrap()
+                .report
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .candidates
+                .is_empty(),
+            "{expression}"
+        );
+    }
 }
 
 #[test]

@@ -27,6 +27,34 @@ fn ok(out: &[Message]) -> Value {
 fn code(out: &[Message]) -> &str {
     &reply(out).error.as_ref().unwrap().code
 }
+#[test]
+fn ready_advertises_handwritten_and_version_three_without_new_rpc() {
+    let s = Session::new(AppKind::Blackboard);
+    let Message::Event(ready) = s.ready() else {
+        panic!("ready event")
+    };
+    assert_eq!(ready.data["document_file_versions"], json!([1, 2, 3]));
+    assert!(
+        ready.data["resource_persistence_versions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("board-session-package-v3"))
+    );
+    assert!(
+        ready.data["object_types"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("handwritten"))
+    );
+    assert!(
+        !ready.data["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method.as_str().unwrap().starts_with("handwriting."))
+    );
+}
+
 fn configured() -> Session {
     let mut s = Session::new(AppKind::Drawing);
     ok(&call(
@@ -1131,6 +1159,146 @@ fn math_plain_and_image_package_versions_roundtrip_without_loss() {
 }
 
 #[test]
+fn handwritten_plain_and_image_package_roundtrip_rejects_v2_without_replacing_session() {
+    for with_image in [false, true] {
+        for with_layout in [false, true] {
+            let mut s = configured();
+            let object = BoardObject {
+                id: "handwritten-result".into(),
+                kind: ObjectKind::Handwritten {
+                    position: Point { x: 80.0, y: 120.0 },
+                    text: "2".into(),
+                    layout: with_layout.then(|| board_core::MathLayout::Text("2".into())),
+                    strokes: vec![board_core::HandwritingStroke {
+                        points: vec![
+                            board_core::StrokePoint {
+                                x: 1.0,
+                                y: 2.0,
+                                time: 0.0,
+                                pressure: 1.0,
+                            },
+                            board_core::StrokePoint {
+                                x: 12.0,
+                                y: 24.0,
+                                time: 0.25,
+                                pressure: 1.0,
+                            },
+                        ],
+                        style: board_core::Style {
+                            color: Color {
+                                r: 32,
+                                g: 64,
+                                b: 128,
+                                a: 200,
+                            },
+                            width: 2.5,
+                            dashed: false,
+                        },
+                    }],
+                },
+            };
+            let mut p = context(&s);
+            p["operations"] = json!([Operation::Add {
+                object: object.clone()
+            }]);
+            ok(&call(&mut s, "objects.apply", p));
+            let asset = if with_image {
+                let asset = ok(&call(
+                    &mut s,
+                    "resources.import_png",
+                    json!({"bytes": png()}),
+                ))["asset_ref"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                let mut p = context(&s);
+                p["operations"] = json!([Operation::Add {
+                    object: BoardObject {
+                        id: "image".into(),
+                        kind: ObjectKind::Image {
+                            position: Point::default(),
+                            width: 10.0,
+                            height: 10.0,
+                            asset_ref: asset.clone(),
+                        },
+                    },
+                }]);
+                ok(&call(&mut s, "objects.apply", p));
+                Some(asset)
+            } else {
+                None
+            };
+            let path = std::env::temp_dir().join(format!("session-handwritten-{}.json", new_id()));
+            ok(&call(&mut s, "document.save", json!({"path": path})));
+            assert!(!s.history.is_dirty(&s.document));
+            let mut value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(value["version"], 3);
+            assert_eq!(value["document"]["pages"][0]["objects"][0], json!(object));
+            if with_image {
+                assert_eq!(value["format"], "board-session-package");
+                assert_eq!(value["resources"].as_array().unwrap().len(), 1);
+            } else {
+                assert!(value.get("format").is_none());
+                assert!(value.get("resources").is_none());
+            }
+
+            // A fresh session has no personal profile; the object carries its frozen ink.
+            let mut restored = configured();
+            ok(&call(&mut restored, "document.open", json!({"path": path})));
+            assert_eq!(restored.document, s.document);
+            assert_eq!(restored.document.current_page().objects[0], object);
+            assert!(!restored.history.is_dirty(&restored.document));
+            assert!(!restored.history.can_undo());
+            assert!(!restored.history.can_redo());
+            if let Some(asset) = &asset {
+                assert_eq!(restored.resources.png_bytes(asset).unwrap(), png());
+            }
+
+            add(&mut restored, "unsaved", "keep this edit");
+            add(&mut restored, "redoable", "keep this redo");
+            let p = context(&restored);
+            ok(&call(&mut restored, "undo", p));
+            let before = restored.document.clone();
+            let state = ok(&call(&mut restored, "get_state", json!({})));
+            assert_eq!(state["dirty"], true);
+            assert_eq!(state["can_undo"], true);
+            assert_eq!(state["can_redo"], true);
+            value["version"] = json!(2);
+            std::fs::write(&path, value.to_string()).unwrap();
+            assert_eq!(
+                code(&call(
+                    &mut restored,
+                    "document.open",
+                    json!({"path": path, "discard_unsaved": true}),
+                )),
+                "invalid_document"
+            );
+            assert_eq!(restored.document, before);
+            assert_eq!(ok(&call(&mut restored, "get_state", json!({}))), state);
+            if let Some(asset) = &asset {
+                assert_eq!(restored.resources.png_bytes(asset).unwrap(), png());
+            }
+            let p = context(&restored);
+            assert_eq!(ok(&call(&mut restored, "redo", p))["changed"], true);
+            assert_eq!(
+                restored.document.current_page().objects.last().unwrap().id,
+                "redoable"
+            );
+            for _ in 0..2 {
+                let p = context(&restored);
+                assert_eq!(ok(&call(&mut restored, "undo", p))["changed"], true);
+            }
+            assert_eq!(
+                restored.document.current_page().objects,
+                s.document.current_page().objects
+            );
+            assert!(!restored.history.is_dirty(&restored.document));
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+}
+
+#[test]
 fn connections_plain_and_resource_package_roundtrip() {
     for with_resource in [false, true] {
         let mut s = connection_fixture();
@@ -1164,6 +1332,8 @@ fn connections_plain_and_resource_package_roundtrip() {
         };
         let path = std::env::temp_dir().join(format!("session-connections-{}.json", new_id()));
         ok(&call(&mut s, "document.save", json!({"path": path})));
+        let value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value["version"], 1);
         assert!(!s.history.is_dirty(&s.document));
         let saved = s.document.clone();
         let mut restored = configured();

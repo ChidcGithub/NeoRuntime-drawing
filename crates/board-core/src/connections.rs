@@ -54,6 +54,37 @@ impl Budget {
         let (points, size) = match &object.kind {
             ObjectKind::Stroke { points, .. } => (points.len(), std::mem::size_of::<StrokePoint>()),
             ObjectKind::Shape { points, .. } => (points.len(), std::mem::size_of::<Point>()),
+            ObjectKind::Handwritten {
+                text,
+                layout,
+                strokes,
+                ..
+            } => {
+                if text.len() > MAX_HANDWRITING_TEXT_BYTES
+                    || strokes.is_empty()
+                    || strokes.len() > MAX_HANDWRITING_STROKES
+                {
+                    return Err(Error::InvalidDocument("手写答案文字或笔画数超限".into()));
+                }
+                let points = strokes.iter().fold(0usize, |total, stroke| {
+                    total.saturating_add(stroke.points.len())
+                });
+                if points > MAX_HANDWRITING_POINTS {
+                    return Err(Error::InvalidDocument("手写答案点数超过 32768".into()));
+                }
+                self.bytes(text.len())?;
+                self.bytes(
+                    strokes
+                        .len()
+                        .saturating_mul(std::mem::size_of::<HandwritingStroke>()),
+                )?;
+                if let Some(layout) = layout {
+                    let (nodes, bytes) = layout.measure()?;
+                    self.bytes(nodes.saturating_mul(std::mem::size_of::<MathLayout>()))?;
+                    self.bytes(bytes)?;
+                }
+                (points, std::mem::size_of::<StrokePoint>())
+            }
             ObjectKind::Text { text, .. } => {
                 self.bytes(text.len())?;
                 (0, 0)

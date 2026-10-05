@@ -147,8 +147,41 @@ fn merged_plot_intersections_are_deduplicated_and_budgeted() {
 }
 
 #[test]
+fn basic_line_plot_intersections_accept_all_plot_spellings() {
+    for (expression, expected) in [
+        ("x", vec![(0.0, 0.0)]),
+        ("y=x", vec![(0.0, 0.0)]),
+        ("2*x+1", vec![(-0.5, 0.0), (0.0, 1.0)]),
+        ("y=2*x+1", vec![(-0.5, 0.0), (0.0, 1.0)]),
+        ("y=2x+1", vec![(-0.5, 0.0), (0.0, 1.0)]),
+        ("f(x)=2*x+1", vec![(-0.5, 0.0), (0.0, 1.0)]),
+        ("y-x=1", vec![(-1.0, 0.0), (0.0, 1.0)]),
+        ("x=2", vec![(2.0, 0.0)]),
+    ] {
+        let report = intersections(&plot(expression.into(), Point::default()));
+        assert!(report.diagnostics.is_empty(), "{expression}: {report:?}");
+        assert_eq!(report.candidates.len(), expected.len(), "{expression}");
+        for (x, y) in expected {
+            let label = format!("({x:.6}, {y:.6})");
+            assert!(
+                report
+                    .candidates
+                    .iter()
+                    .any(|(_, text)| text.contains(&label)),
+                "{expression}: {report:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn implicit_and_mixed_intersections_are_unsupported_without_explicit_fallback() {
-    for curves in [vec!["y^2=x"], vec!["x", "y-x=1"], vec!["x^2+y^2=1", "-x"]] {
+    for curves in [
+        vec!["y^2=x"],
+        vec!["x", "y^2=x"],
+        vec!["x^2+y^2=1", "-x"],
+        vec!["x", "sin(y)=x"],
+    ] {
         let mut object = plot(curves[0].into(), Point::default());
         if let ObjectKind::FunctionPlot { expressions, .. } = &mut object.kind {
             *expressions = curves.into_iter().map(String::from).collect();
@@ -167,6 +200,202 @@ fn implicit_and_mixed_intersections_are_unsupported_without_explicit_fallback() 
         assert!(report.summary().contains("未执行搜索"));
         assert!(!report.summary().contains("非证明无交点"));
     }
+}
+
+#[test]
+fn mixed_lines_and_curves_use_the_same_feature_search() {
+    for (curves, expected) in [
+        (
+            vec!["y=x", "y-x=1", "x=2"],
+            vec![
+                (0.0, 0.0),
+                (-1.0, 0.0),
+                (0.0, 1.0),
+                (2.0, 0.0),
+                (2.0, 2.0),
+                (2.0, 3.0),
+            ],
+        ),
+        (
+            vec!["f(x)=x^2", "x=2"],
+            vec![(0.0, 0.0), (2.0, 0.0), (2.0, 4.0)],
+        ),
+        (
+            vec!["y=x^2", "y-x=2"],
+            vec![(0.0, 0.0), (-2.0, 0.0), (0.0, 2.0), (-1.0, 1.0), (2.0, 4.0)],
+        ),
+        (vec!["y=0.1*x+0.3"], vec![(-3.0, 0.0), (0.0, 0.3)]),
+    ] {
+        let mut object = plot(curves[0].into(), Point { x: 20.0, y: 40.0 });
+        if let ObjectKind::FunctionPlot { expressions, .. } = &mut object.kind {
+            *expressions = curves.iter().map(|s| (*s).into()).collect();
+        }
+        let report = intersections(&object);
+        assert!(report.diagnostics.is_empty(), "{curves:?}: {report:?}");
+        assert_eq!(
+            report.candidates.len(),
+            expected.len(),
+            "{curves:?}: {report:?}"
+        );
+        for (x, y) in expected {
+            let label = format!("({x:.6}, {y:.6})");
+            let (point, _) = report
+                .candidates
+                .iter()
+                .find(|(_, text)| text.contains(&label))
+                .unwrap_or_else(|| panic!("{label}: {report:?}"));
+            let expected = Pos2::new(
+                20.0 + ((x + 10.0) / 20.0) as f32 * 500.0,
+                40.0 + ((7.0 - y) / 14.0) as f32 * 350.0,
+            );
+            assert!(point.distance(expected) < 1e-3);
+        }
+    }
+}
+
+#[test]
+fn line_feature_search_clips_both_axes_and_distinguishes_parallel_from_coincident() {
+    for (curves, non_discrete) in [
+        (vec!["x=2", "x=3"], false),
+        (vec!["y=x", "y=x+1"], false),
+        (vec!["y=x", "y=x+1e-7"], false),
+        (vec!["x=2", "2*x=4"], true),
+        (vec!["y=x", "2*y-2*x=0"], true),
+        (vec!["y=0"], true),
+        (vec!["x=0"], true),
+    ] {
+        let mut object = plot(curves[0].into(), Point::default());
+        if let ObjectKind::FunctionPlot { expressions, .. } = &mut object.kind {
+            *expressions = curves.iter().map(|s| (*s).into()).collect();
+        }
+        let report = intersections(&object);
+        assert_eq!(
+            report.non_discrete_searches > 0,
+            non_discrete,
+            "{curves:?}: {report:?}"
+        );
+        assert_eq!(report.failed_searches, 0);
+        assert!(
+            !report
+                .diagnostics
+                .iter()
+                .any(|d| d.issue == IntersectionIssue::PossiblyNonDiscrete)
+        );
+    }
+    for curves in [
+        vec!["x=2", "x=3"],
+        vec!["y=x+2", "y=x+3"],
+        vec!["x=11"],
+        vec!["y=8"],
+    ] {
+        let mut object = plot(curves[0].into(), Point::default());
+        if let ObjectKind::FunctionPlot {
+            expressions,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            ..
+        } = &mut object.kind
+        {
+            *expressions = curves.iter().map(|s| (*s).into()).collect();
+            (*x_min, *x_max, *y_min, *y_max) = (1.0, 4.0, 1.0, 4.0);
+        }
+        let report = intersections(&object);
+        assert!(report.candidates.is_empty(), "{curves:?}: {report:?}");
+        assert!(report.diagnostics.is_empty(), "{report:?}");
+    }
+}
+
+#[test]
+fn intersection_review_boundary_corner_and_original_domain_regressions() {
+    let mut object = plot(".1*x+.2".into(), Point::default());
+    if let ObjectKind::FunctionPlot {
+        expressions,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        ..
+    } = &mut object.kind
+    {
+        expressions.push("x=1".into());
+        (*x_min, *x_max, *y_min, *y_max) = (-1.0, 2.0, -1.0, 0.3);
+    }
+    let report = intersections(&object);
+    assert!(report.diagnostics.is_empty(), "{report:?}");
+    assert!(
+        report
+            .candidates
+            .iter()
+            .any(|(_, label)| label.contains("(1.000000, 0.300000)")),
+        "{report:?}"
+    );
+
+    if let ObjectKind::FunctionPlot {
+        expressions,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        ..
+    } = &mut object.kind
+    {
+        *expressions = vec!["x+y=2".into(), "2*x+2*y=4".into()];
+        (*x_min, *x_max, *y_min, *y_max) = (0.0, 1.0, 0.0, 1.0);
+    }
+    let report = intersections(&object);
+    assert_eq!(report.candidates.len(), 1, "{report:?}");
+    assert!(report.candidates[0].1.contains("(1.000000, 1.000000)"));
+    assert_eq!(report.non_discrete_searches, 0);
+    assert!(report.diagnostics.is_empty());
+
+    if let ObjectKind::FunctionPlot {
+        expressions,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        ..
+    } = &mut object.kind
+    {
+        *expressions = vec!["y-2*x=1e308*x-1e308*x".into(), "y=x^2".into()];
+        (*x_min, *x_max, *y_min, *y_max) = (1.9, 2.1, 3.5, 4.5);
+    }
+    let report = intersections(&object);
+    assert!(report.candidates.is_empty(), "{report:?}");
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.issue == IntersectionIssue::DomainGap),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn malformed_plot_and_unavailable_solver_have_different_diagnostics() {
+    for expression in ["y=", "y=x=1", "f(x)=", "y=x+"] {
+        let report = intersections(&plot(expression.into(), Point::default()));
+        assert!(report.candidates.is_empty());
+        assert!(report.failed_searches > 0, "{expression}: {report:?}");
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .all(|d| d.issue == IntersectionIssue::Failed && d.message.contains("语法"))
+        );
+        assert!(!report.summary().contains("暂不支持"));
+    }
+    let mut object = plot("x".into(), Point::default());
+    if let ObjectKind::FunctionPlot { expressions, .. } = &mut object.kind {
+        expressions.extend(vec!["y=".into(); 7]);
+        expressions.push("y^2=x".into());
+    }
+    let report = intersections(&object);
+    assert!(report.candidates.is_empty());
+    assert!(report.summary().contains("未执行搜索"));
+    assert_eq!(report.diagnostics.len(), MAX_PLOT_DIAGNOSTICS);
 }
 
 #[test]
@@ -217,7 +446,7 @@ fn intersection_report_retains_good_points_and_bounds_diagnostics() {
 
 #[test]
 fn limited_search_and_coincident_curves_are_explicit() {
-    let object = plot("x".into(), Point::default());
+    let object = plot("x^2".into(), Point::default());
     let limited = intersections_with_options(
         &object,
         board_math::NumericOptions {

@@ -1,6 +1,6 @@
 # Blackboard
 
-`neo-blackboard` is a multipage writing board with an opaque textured background, optional handwriting recognition, and limited mathematics. **Version 0.0.1 is unreleased**; packaging and cross-platform acceptance testing are not complete.
+`neo-blackboard` is a multipage writing board with an opaque textured background, optional handwriting recognition, and limited mathematics. **Version 0.0.1 is a source-only prerelease**; binary packaging and cross-platform acceptance testing are not complete.
 
 ## Build and run
 
@@ -28,7 +28,7 @@ cargo build --release -p neo-blackboard --locked
 ## Save, open, and export
 
 - Enter explicit paths to save/open documents, import PNG images, or export the current page as PNG/SVG. `Ctrl+S` saves; `Ctrl+Z` and `Ctrl+Y` undo and redo.
-- Saves retain referenced images but not undo history. Two-dimensional math objects require v2 files; the current application reads v1/v2, while older readers cannot read v2.
+- Saves retain referenced images but not undo history. The application reads v1/v2/v3 and saves the smallest required version: any `Handwritten` object requires v3; otherwise any `Math` object requires v2; all other documents use v1. Images determine whether resources are packaged, not the version. Older v1/v2 readers cannot read v3; v1-only readers cannot read v2.
 - Page export is not a desktop screenshot or a document save. Missing images, PNG text fonts, or glyphs in supplied fonts cause errors; SVG without supplied font outlines relies on viewer fonts.
 - New, open, and exit operations protect unsaved changes. A failed save leaves the document dirty. Disconnection attempts a recovery save and reports its path to stderr; recovery is not automatically reopened or guaranteed against disk failure.
 
@@ -45,9 +45,19 @@ cargo build --release -p neo-blackboard --locked
 python crates/board-hwr/download_texteller.py --dir models/texteller
 ```
 
-The download is approximately 1.25 GB and requires network access. Python is used for installation; inference runs locally. See [model setup, provenance, and licensing](../api/MODELS.md). A directory's existence does not establish model completeness or loading. Review all recognition results; unsupported or ambiguous LaTeX is rejected rather than silently removed.
+The download is approximately 1.25 GB and requires network access. Python is used for installation; inference runs locally. Additional setup notes are maintained in the local-only `api/MODELS.md`, excluded from current public checkouts. A directory's existence does not establish model completeness or loading. Review all recognition results; unsupported or ambiguous LaTeX is rejected rather than silently removed.
 
-For low-memory CPUs, use a separately converted INT8 directory; [conversion and benchmark instructions](../api/MODELS.md#low-memory-cpu-preparation) include measured memory/latency and accuracy caveats. The GUI prefers a complete `models/texteller-int8` directory suggestion but still requires explicit loading. Use **Unload model**, or switch to templates, to release it after ongoing work drains. Recognition Off alone retains the model. Reload is unavailable until old inference/loading work has finished. No whole-machine 3 GB guarantee is made.
+For low-memory CPUs, use a separately converted INT8 directory with the [offline converter](../crates/board-hwr/prepare_texteller_int8.py). Run it with `--help` for options; conversion and benchmark notes remain in the local-only `api/MODELS.md`. Synthetic benchmark results do not establish recognition accuracy or target-machine acceptance. The GUI prefers a complete `models/texteller-int8` directory suggestion but still requires explicit loading. Use **Unload model**, or switch to templates, to release it after ongoing work drains. Recognition Off alone retains the model. Reload is unavailable until old inference/loading work has finished. No whole-machine 3 GB guarantee is made.
+
+## Personal handwritten answers (experimental)
+
+- In the mathematics panel, **个人笔迹答案（实验性）** enables local numeric style learning and personalized answers by default, independently of HWR, which remains off by default. Calculation and insertion still require a click. Only newly committed local pen strokes feed automatic style statistics; optional exact-glyph sampling needs a manual character label. See the [full workflow and privacy limits](../README.md#personal-handwritten-answers-experimental).
+- Preview generation and profile JSON save/load share one background slot with no queue. Stale preview/load results are discarded after relevant source, profile, document/page, panel, or font changes; a valid preview reuses cached render meshes on idle frames and does not modify the document or learning statistics.
+- Saving/loading requires an explicit local path and overwrite/replacement confirmation. An authorized save writes the profile snapshot captured at the click: closing the panel or changing the profile does **not** interrupt that in-progress write, and later edits are not included. There is no automatic profile persistence or loading.
+- Same-frame keyboard edits, cancellation, and setting changes are processed before accepting ready background answers. Sampling-area `Ctrl+Z` takes priority over document undo while a sample draft is active and text input is not focused.
+- Synthesized operators and fraction bars share a math axis; spacing accounts for the clamped pen width and bounded miter joins. Lowercase `o` retains a smaller body than `0`, and `x` uses a hooked form distinct from `×`; these are readability improvements, not an accuracy guarantee. Frozen answers remain whole objects and do not change with later profile edits.
+- Font-derived skeletons share a bounded cache per loaded font generation (128 characters, 65,536 points, 2 MiB of accounted entry payload); replacing the font starts a new generation. This is separate from the page renderer's 64 MiB retained mesh-buffer budget, neither of which caps total process or machine RAM. Committed pages use document-revision caching, while temporary previews stay separate; font-file reads are bounded to 64 MiB and validated before installation.
+- Native GUI readability, complex Chinese glyphs, keyboard/cancellation behavior, and target i5/3 GB performance/memory still need manual validation.
 
 ## Mathematics scope
 
@@ -55,7 +65,9 @@ For low-memory CPUs, use a separately converted INT8 directory; [conversion and 
 - Supported algebra includes limited x/y polynomials, linear/quadratic equations in one variable, and two-variable linear systems. `simplify`, `diff`, and `integrate` are limited to polynomials of total degree at most 12, not a full CAS or general symbolic integration.
 - Equation/polynomial operations use floating-point algorithms. GUI quadratic-system, root, and intersection searches are bounded; no candidate does not mean no solution. Numerical derivatives and definite integrals are not general symbolic solvers.
 - Plots support explicit functions and single implicit x/y polynomial equations with numeric coefficients and total degree at most two, such as `y^2=x`. Arbitrary implicit, higher-degree, and parametric plots are unsupported.
-- Intersection search is not supported for implicit or mixed explicit/implicit plots. 3D shapes are two-dimensional projected wireframes, not rotatable solids.
+- Select a plot and use **求点** for supported curve/curve and coordinate-axis intersections within the plot's x/y bounds. Straight lines accept `y=2x+1`, `f(x)=2x+1`, `y-x=1`, and manually plotted vertical lines such as `x=2`; lines can be mixed with supported explicit functions. Parallel lines yield no pairwise point; coincident lines sharing a segment within the rectangle report non-discrete intersections; if they only touch one rectangle corner, that single point is returned.
+- Line/line intersections use analytic formulas in **f64 floating-point**, not exact rational arithmetic; near-singular systems, domain errors, overflow, or failed residual checks can produce errors. Vertical-line/explicit-function pairs evaluate at the line's x; other explicit pairs use bounded, incomplete numerical search, with candidates checked against both original expressions. Boundary clipping accepts at most four ULPs of rounding, not the root-finding tolerance, and rechecks clamped points at machine-precision scale. This preserves decimal boundary cases such as `0.1*x+0.2` at `x=1`, `y_max=0.3`, without treating genuinely out-of-range points as in bounds. General implicit quadratics such as `y^2=x` or `x^2+y^2=9` remain unsupported for 求点: an unsupported curve in the inspected set prevents the whole-plot search, rather than returning only the explicit subset. At most the first 16 curves are inspected, with an explicit limit diagnostic for larger plots.
+- These are GUI/library features, not new RPCs or an expansion of `math.calculate`. 3D shapes are two-dimensional projected wireframes, not rotatable solids.
 
 ## Windows screenshots and Agent
 
@@ -73,4 +85,6 @@ Local capture uses a built-in Win32 selection overlay and GDI pixel acquisition.
 
 Project-owned code is [Apache-2.0](../LICENSE); third-party dependencies, fonts, runtimes, and models retain their own licenses. See the [distribution requirements](../RELEASING.md).
 
-[Root README](../README.md) · [API reference](../api/DRAWING_API.md) · [Protocol](../api/PROTOCOL.md) · [Release notes](../CHANGELOG.md) · [Drawing](../drawing/README.md)
+[Root README](../README.md) · [Release notes](../CHANGELOG.md) · [Drawing](../drawing/README.md)
+
+The API reference and protocol are maintained in the local-only `api/` directory. Coordinate with the maintainer for host integration documentation.

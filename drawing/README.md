@@ -1,6 +1,6 @@
 # Drawing
 
-`neo-drawing` is a transparent, always-on-top desktop annotation tool. **Version 0.0.1 is unreleased**; packaging and cross-platform acceptance testing are not complete.
+`neo-drawing` is a transparent, always-on-top desktop annotation tool. **Version 0.0.1 is a source-only prerelease**; binary packaging and cross-platform acceptance testing are not complete.
 
 ## Build and run
 
@@ -34,7 +34,7 @@ cargo build --release -p neo-drawing --locked
 ## Save, open, and export
 
 - Enter explicit paths in the file panel to save/open documents, import PNG images, or export the current page as PNG/SVG.
-- Saves include referenced images, but not undo history. Files with two-dimensional math objects use v2; the current application reads v1/v2, while older readers cannot read v2.
+- Saves include referenced images, but not undo history. The application reads v1/v2/v3 and saves the smallest required version: any `Handwritten` object requires v3; otherwise any `Math` object requires v2; all other documents use v1. Images determine whether resources are packaged, not the version. Older v1/v2 readers cannot read v3; v1-only readers cannot read v2.
 - Page export is not a desktop screenshot and does not mark a document as saved. Drawing exports use a white background.
 - Missing images, missing PNG text fonts, or missing glyphs in supplied fonts cause export errors. SVG without supplied font outlines relies on viewer fonts.
 - New, open, and exit operations protect unsaved changes. Exit offers save, discard, or cancel; a failed save leaves the document dirty.
@@ -56,8 +56,12 @@ Local capture uses a built-in Win32 selection overlay and GDI pixel acquisition.
 
 Drawing has no mathematics panel. See [Blackboard](../blackboard/README.md) for optional handwriting recognition and limited mathematics. Recognition is off by default, and recognized input requires a click to calculate or plot. TexTeller requires explicit model preparation and loading. Numerical searches are not complete solvers; 3D shapes are two-dimensional projected wireframes.
 
-Compilation and headless tests do not establish native transparency, passthrough, touch, or real host-service acceptance.
+Committed pages use document-revision render caching; temporary gesture previews do not reuse that committed-content key. The page renderer's 64 MiB retained mesh-buffer budget is not a global RAM cap: snapshots, scenes, fonts/images, submitted frames, and other application state are separate. GUI font reads are bounded to 64 MiB per file and validated before installation.
+
+Compilation and headless tests do not establish native transparency, passthrough, touch, or real host-service acceptance. Native GUI and target i5/3 GB performance/memory validation remain pending.
 
 Project-owned code is [Apache-2.0](../LICENSE); third-party dependencies, fonts, runtimes, and models retain their own licenses. See the [distribution requirements](../RELEASING.md).
 
-[Root README](../README.md) · [API reference](../api/DRAWING_API.md) · [Protocol](../api/PROTOCOL.md) · [Release notes](../CHANGELOG.md)
+[Root README](../README.md) · [Release notes](../CHANGELOG.md)
+
+The API reference and protocol are maintained in the local-only `api/` directory, excluded from current public checkouts. Coordinate with the maintainer for host integration documentation.

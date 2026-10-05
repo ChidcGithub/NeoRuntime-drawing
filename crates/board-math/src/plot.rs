@@ -10,6 +10,199 @@ pub enum PlotKind {
     Implicit(String),
 }
 
+/// 可求交的显函数或仿射直线；由绘图分类器规范化，不能绕过输入限制。
+/// 一般隐式二次曲线不在此接口的求交范围内。
+#[derive(Debug, Clone)]
+pub struct IntersectionCurve {
+    explicit: Option<String>,
+    affine: Option<Polynomial>,
+    original: (Expr, Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CurveIntersection {
+    Points(Vec<Point>),
+    /// 仿射直线重合，或相同显函数在共同定义域上重合（定义域可能为空）。
+    NonDiscrete,
+}
+
+// 只吸收边界的少量浮点舍入，不使用用户的求根容差扩大矩形。
+fn clip_coordinate(value: f64, low: f64, high: f64) -> Option<f64> {
+    if !value.is_finite() {
+        return None;
+    }
+    if value < low {
+        let mut outer = low;
+        for _ in 0..4 {
+            outer = outer.next_down();
+        }
+        (value >= outer).then_some(low)
+    } else if value > high {
+        let mut outer = high;
+        for _ in 0..4 {
+            outer = outer.next_up();
+        }
+        (value <= outer).then_some(high)
+    } else {
+        Some(value)
+    }
+}
+
+impl IntersectionCurve {
+    pub fn parse(input: &str) -> Result<Self> {
+        match classify_plot(input)? {
+            PlotKind::Explicit(expression) => {
+                // 多项式化只是快速路径；失败时保留原式的数值预算及定义域。
+                let affine = Polynomial::explicit_graph(&expression)
+                    .ok()
+                    .filter(|p| p.degree() <= 1);
+                Ok(Self {
+                    original: (parse("y")?, parse(&expression)?),
+                    explicit: Some(expression),
+                    affine,
+                })
+            }
+            PlotKind::Implicit(equation) => {
+                let p = algebra::equation(&equation)?;
+                if p.degree() != 1 {
+                    return Err(MathError::Unsupported(
+                        "交点搜索仅支持显函数和仿射直线，不支持一般隐式曲线或退化关系".into(),
+                    ));
+                }
+                let (left, right) = equation.split_once('=').unwrap();
+                Ok(Self {
+                    original: (parse(left)?, parse(right)?),
+                    explicit: None,
+                    affine: Some(p),
+                })
+            }
+        }
+    }
+
+    fn check_point(&self, point: Point, tolerance: f64) -> Result<()> {
+        // 系数消去不能掩盖原 AST 的溢出、下溢或定义域错误。
+        let left = self.original.0.eval_xy(point.x, point.y)?;
+        let right = self.original.1.eval_xy(point.x, point.y)?;
+        let scale = left.abs().max(right.abs()).max(1.0);
+        if (left / scale - right / scale).abs() > tolerance {
+            return Err(MathError::Numerical("交点未通过原式残差校验".into()));
+        }
+        Ok(())
+    }
+
+    fn explicit_expression(&self) -> Result<String> {
+        if let Some(expression) = &self.explicit {
+            return Ok(expression.clone());
+        }
+        let p = self.affine.as_ref().unwrap();
+        let b = p.coefficient(0, 1);
+        let slope = checked_ratio(-p.coefficient(1, 0), b)?;
+        let intercept = checked_ratio(-p.coefficient(0, 0), b)?;
+        Ok(format!("({slope})*x+({intercept})"))
+    }
+
+    fn vertical_x(&self) -> Result<Option<f64>> {
+        match &self.affine {
+            Some(p) if p.coefficient(0, 1) == 0.0 => Ok(Some(checked_ratio(
+                -p.coefficient(0, 0),
+                p.coefficient(1, 0),
+            )?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// 两轴裁剪的交点候选。直线解析求交；其他显函数继承 curve_intersections
+    /// 的有限搜索、残差检查、求值预算及非完备性，不做一般隐式求解。
+    pub fn intersections(
+        &self,
+        other: &Self,
+        bounds: Bounds2D,
+        options: NumericOptions,
+    ) -> Result<CurveIntersection> {
+        options.validate()?;
+        super::numeric::interval(bounds.x_min, bounds.x_max)?;
+        super::numeric::interval(bounds.y_min, bounds.y_max)?;
+        let checked_point = |point: Point| -> Result<Option<Point>> {
+            let (Some(x), Some(y)) = (
+                clip_coordinate(point.x, bounds.x_min, bounds.x_max),
+                clip_coordinate(point.y, bounds.y_min, bounds.y_max),
+            ) else {
+                return Ok(None);
+            };
+            let clipped = Point { x, y };
+            // 边界钳制必须通过机器精度残差检查，不能借宽松求根容差造点。
+            let tolerance = if clipped != point {
+                32.0 * f64::EPSILON
+            } else {
+                options.tolerance
+            };
+            self.check_point(clipped, tolerance)?;
+            other.check_point(clipped, tolerance)?;
+            Ok(Some(clipped))
+        };
+        if let (Some(p), Some(q)) = (&self.affine, &other.affine) {
+            return Ok(match algebra::linear(p, q)? {
+                super::SystemSolutions::None => CurveIntersection::Points(Vec::new()),
+                super::SystemSolutions::Infinite => {
+                    // 仿射函数在矩形四角取极值。异号表示穿过内部，两个零角
+                    // 表示沿边；仅一个零角且其余同号时，交集只有该角点。
+                    let p = p.normalized()?;
+                    let mut negative = false;
+                    let mut positive = false;
+                    let mut corners = Vec::new();
+                    for x in [bounds.x_min, bounds.x_max] {
+                        for y in [bounds.y_min, bounds.y_max] {
+                            let value = p.eval(x, y)?;
+                            negative |= value < 0.0;
+                            positive |= value > 0.0;
+                            if value == 0.0 {
+                                corners.push(Point { x, y });
+                            }
+                        }
+                    }
+                    if (negative && positive) || corners.len() >= 2 {
+                        CurveIntersection::NonDiscrete
+                    } else {
+                        for &corner in &corners {
+                            self.check_point(corner, 32.0 * f64::EPSILON)?;
+                            other.check_point(corner, 32.0 * f64::EPSILON)?;
+                        }
+                        CurveIntersection::Points(corners)
+                    }
+                }
+                super::SystemSolutions::Unique { x, y } => {
+                    CurveIntersection::Points(checked_point(Point { x, y })?.into_iter().collect())
+                }
+            });
+        }
+        for (line, curve) in [(self, other), (other, self)] {
+            if let Some(x) = line.vertical_x()? {
+                if clip_coordinate(x, bounds.x_min, bounds.x_max).is_none() {
+                    return Ok(CurveIntersection::Points(Vec::new()));
+                }
+                let y = super::eval_at(&curve.explicit_expression()?, x)?;
+                return Ok(CurveIntersection::Points(
+                    checked_point(Point { x, y })?.into_iter().collect(),
+                ));
+            }
+        }
+        let first = self.explicit_expression()?;
+        let second = other.explicit_expression()?;
+        if first == second {
+            return Ok(CurveIntersection::NonDiscrete);
+        }
+        let mut points = Vec::new();
+        for point in
+            super::curve_intersections(&first, &second, bounds.x_min, bounds.x_max, options)?
+        {
+            if let Some(point) = checked_point(point)? {
+                points.push(point);
+            }
+        }
+        Ok(CurveIntersection::Points(points))
+    }
+}
+
 fn depends_on(node: &Node, variable: char) -> bool {
     match node {
         Node::Variable(c) => *c == variable,

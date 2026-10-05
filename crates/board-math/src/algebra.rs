@@ -39,6 +39,9 @@ impl Polynomial {
     pub fn parse(input: &str) -> Result<Self> {
         Self::from_node(&parse(input)?.node)
     }
+    pub(crate) fn explicit_graph(input: &str) -> Result<Self> {
+        Self::parse("y")?.add(&Self::parse(input)?, -1.0)
+    }
     pub fn coefficient(&self, x_degree: u8, y_degree: u8) -> f64 {
         *self.terms.get(&(x_degree, y_degree)).unwrap_or(&0.0)
     }

@@ -1,6 +1,14 @@
 # Releasing NeoRuntime-drawing
 
-## v0.0.1 release policy
+## Coordinated Neo 0.1.0 integration
+
+The sections below record the initial **NeoRuntime-drawing v0.0.1 source-only** publication procedure; they are not authorization to republish that tag or to upload Neo binaries. The runtime package version remains 0.0.1 independently of the main Neo application's 0.1.0 version.
+
+For the current integration, pin the reviewed runtime source commit and build it with the locked dependencies. Current document and resource-package readers support v1/v2/v3; Handwritten answers require v3, Math-only documents require v2, and other documents use v1. JSON Lines remains version 1. Hosts must inspect the advertised capabilities rather than assume the initial file-format set.
+
+The main Neo maintainer owns the final package inventory, corresponding-source delivery, dependency/model notices, runtime deployment and release validation. Removing an approval-marker check is not evidence that these obligations have been met. Outstanding evidence remains in `distribution/legal/`; do not include unreviewed local working notes in a source integration commit or treat a successful runtime build as binary/model redistribution clearance.
+
+## v0.0.1 release policy (historical)
 
 The intended public repository is **ChidcGithub/NeoRuntime-drawing**, with tag **v0.0.1** and GitHub's **pre-release** flag enabled. The repository owner has explicitly authorized this public source prerelease. This document describes the procedure; it is not evidence that a tag, upload, visibility change, or release publication has occurred.
 
@@ -10,7 +18,7 @@ This is the initial prerelease, not an upgrade from a previous published version
 
 - Publish source only through GitHub's automatically generated **Source code (zip)** and **Source code (tar.gz)** archives for the release tag.
 - Do not attach executables, installers, portable packages, model weights, fonts, ONNX Runtime binaries, runtime DLLs, or dependency bundles. A successful local build is not permission to distribute its output.
-- Keep `Cargo.toml`, `Cargo.lock`, project source, public documentation, API documents/examples, and `LICENSE` in the source tree. A lockfile describes dependencies; it does not bundle them.
+- Keep `Cargo.toml`, `Cargo.lock`, project source, public documentation, and `LICENSE` in the public source tree. API documents/examples stay in the ignored local `api/` directory. A lockfile describes dependencies; it does not bundle them.
 - Third-party license/NOTICE obligations and clean-machine runtime requirements have not been fully reviewed. They block binary/model packaging, not the explicitly authorized project-source prerelease, provided the public source contents themselves are reviewed.
 - Builds can still download dependencies. In particular, the current `ort` configuration enables native runtime download/copy support. “Source only” does not mean dependency-free, fully offline, or reproducibly built from source alone.
 
@@ -22,7 +30,7 @@ Before making the repository public or publishing its tag:
 - [ ] Review both the intended tree and reachable repository history for secrets, personal data, local documents, and unintended binaries. Source archives follow the tagged tree; a public repository also exposes its reachable history.
 - [ ] Keep local-only development histories, agent instructions, license-review working notes, debug logs, `.dbg/`, `.workbuddy/`, `target/`, downloaded models, personal templates, board documents, and recovery files out of the public tree. Preserve the original local materials rather than deleting them as a documentation cleanup.
 - [ ] Verify the actual tracked/tagged contents. Local ignore rules do not remove already tracked files or erase prior history; an ignore entry alone is not proof of exclusion. If excluded content is already tracked or present in history, resolve that separately with the owner before publication.
-- [ ] Keep the API protocol/reference and JSON examples available. Check links against the intended public tree, not just files that happen to exist locally. The three root release documents must not depend on local-only notes.
+- [ ] Preserve the local API protocol/reference and JSON examples without adding `api/` back to the public tree. Check links against the intended public tree, not just files that happen to exist locally. Public documentation must identify local-only references explicitly rather than presenting them as downloadable links.
 - [ ] Review older application/API documents for stale release wording or links to excluded local notes. Do not treat the root-document update as a complete audit of every historical document.
 - [ ] Confirm `LICENSE` is present and applicable to the project-owned source. Retain applicable third-party notices for any third-party material actually present in the source tree.
 
@@ -87,7 +95,7 @@ Do not claim a release URL is live until publication has actually been verified.
 
 ## 4. Requirements for any future binary or model distribution
 
-These are follow-up gates, not assets included in v0.0.1:
+These are follow-up gates, not assets included in v0.0.1. The [distribution license evidence](distribution/legal/README.md) records default-font terms, verified DirectML provenance, and the remaining native-runtime/model redistribution requirements. Collected texts are not blanket legal clearance:
 
 - Inventory the actual package contents and statically/dynamically linked components, including ONNX Runtime, compiler runtimes, fonts, and any model weights. Review their individual licenses, notices, attribution, redistribution conditions, and provenance.
 - Confirm the project-owned code's licensing scope and any applicable copyright/NOTICE statements with the rights holders. Do not invent a copyright holder, year, or attribution. The standard Apache license appendix is a template, not an assertion of project ownership.

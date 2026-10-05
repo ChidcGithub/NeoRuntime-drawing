@@ -1,8 +1,10 @@
 //! 无窗口共享渲染。页面坐标直接对应 egui 逻辑点或导出像素，左上为原点，向下为正。
 //! 界面字体由应用安装到 egui；PNG 字体和图片通过 RenderResources 显式注入。
 
+mod handwriting_font;
 mod resources;
 use ab_glyph::{Font, ScaleFont};
+pub use handwriting_font::HandwritingFont;
 pub use resources::{MAX_FONT_BYTES, MAX_RESOURCE_BYTES, MAX_RESOURCE_PIXELS, RenderResources};
 
 use board_core::{BoardObject, Color, MathLayout, ObjectKind, Page, Point, Style};
@@ -445,6 +447,8 @@ fn validate_object(object: &BoardObject) -> Result<()> {
         ObjectKind::Stroke { points, .. } => points
             .iter()
             .all(|p| check_coord(p.x) && check_coord(p.y) && p.time <= 1e12),
+        // Core validates local and translated coordinates, time, pressure and styles.
+        ObjectKind::Handwritten { .. } => true,
         ObjectKind::Shape { points, .. } => points.iter().copied().all(point_ok),
         ObjectKind::Text {
             position,
@@ -839,6 +843,69 @@ impl PlotSamplesCache {
     }
 }
 
+fn append_stroke(
+    scene: &mut Scene,
+    points: &[board_core::StrokePoint],
+    style: &Style,
+    offset: Point,
+) -> Result<()> {
+    // Widths use the frozen local samples so moving an answer cannot change velocity.
+    let widths = stroke_widths(points, style);
+    let centers: Vec<_> = points.iter().map(|p| egui::pos2(p.x, p.y)).collect();
+    // Split dashes locally too: translation must not change the frozen geometry.
+    let emit = |scene: &mut Scene, mut centers: Vec<Pos2>, widths: Vec<f32>| {
+        for center in &mut centers {
+            *center += egui::vec2(offset.x, offset.y);
+        }
+        scene.stroke(centers, widths, style.color)
+    };
+    if !style.dashed || centers.len() == 1 {
+        emit(scene, centers, widths)?;
+    } else {
+        let dash = f64::from((style.width * 3.0).max(4.0));
+        let period = dash * 1.6;
+        let mut phase = 0.0_f64;
+        let mut run = Vec::new();
+        let mut sizes = Vec::new();
+        let mut steps = 0;
+        for (i, pair) in centers.windows(2).enumerate() {
+            let length = f64::from(pair[0].distance(pair[1]));
+            let mut cursor = 0.0;
+            while cursor < length {
+                steps += 1;
+                if steps > MAX_INPUT_POINTS * 2 {
+                    return Err(RenderError::ResourceLimit("虚线细分过多"));
+                }
+                let visible = phase < dash;
+                let step = (if visible {
+                    dash - phase
+                } else {
+                    period - phase
+                })
+                .max(1e-6)
+                .min(length - cursor);
+                if visible {
+                    for distance in [cursor, cursor + step] {
+                        let t = (distance / length) as f32;
+                        run.push(pair[0].lerp(pair[1], t));
+                        sizes.push(widths[i] + (widths[i + 1] - widths[i]) * t);
+                    }
+                } else if !run.is_empty() {
+                    emit(scene, std::mem::take(&mut run), std::mem::take(&mut sizes))?;
+                }
+                cursor += step;
+                phase = (phase + step).rem_euclid(period);
+            }
+        }
+        if centers.iter().all(|p| *p == centers[0]) {
+            emit(scene, centers, widths)?;
+        } else {
+            emit(scene, run, sizes)?;
+        }
+    }
+    Ok(())
+}
+
 fn append_object(
     scene: &mut Scene,
     object: &BoardObject,
@@ -849,55 +916,13 @@ fn append_object(
     match &object.kind {
         ObjectKind::Stroke { points, style } => {
             // The input already carries ink's Hermite sampling; never smooth it a second time.
-            let widths = stroke_widths(points, style);
-            let centers: Vec<_> = points.iter().map(|p| egui::pos2(p.x, p.y)).collect();
-            if !style.dashed || centers.len() == 1 {
-                scene.stroke(centers, widths, style.color)?;
-            } else {
-                let dash = f64::from((style.width * 3.0).max(4.0));
-                let period = dash * 1.6;
-                let mut phase = 0.0_f64;
-                let mut run = Vec::new();
-                let mut sizes = Vec::new();
-                let mut steps = 0;
-                for (i, pair) in centers.windows(2).enumerate() {
-                    let length = f64::from(pair[0].distance(pair[1]));
-                    let mut cursor = 0.0;
-                    while cursor < length {
-                        steps += 1;
-                        if steps > MAX_INPUT_POINTS * 2 {
-                            return Err(RenderError::ResourceLimit("虚线细分过多"));
-                        }
-                        let visible = phase < dash;
-                        let step = (if visible {
-                            dash - phase
-                        } else {
-                            period - phase
-                        })
-                        .max(1e-6)
-                        .min(length - cursor);
-                        if visible {
-                            for distance in [cursor, cursor + step] {
-                                let t = (distance / length) as f32;
-                                run.push(pair[0].lerp(pair[1], t));
-                                sizes.push(widths[i] + (widths[i + 1] - widths[i]) * t);
-                            }
-                        } else if !run.is_empty() {
-                            scene.stroke(
-                                std::mem::take(&mut run),
-                                std::mem::take(&mut sizes),
-                                style.color,
-                            )?;
-                        }
-                        cursor += step;
-                        phase = (phase + step).rem_euclid(period);
-                    }
-                }
-                if centers.iter().all(|p| *p == centers[0]) {
-                    scene.stroke(centers, widths, style.color)?;
-                } else {
-                    scene.stroke(run, sizes, style.color)?;
-                }
+            append_stroke(scene, points, style, Point::default())?;
+        }
+        ObjectKind::Handwritten {
+            position, strokes, ..
+        } => {
+            for stroke in strokes {
+                append_stroke(scene, &stroke.points, &stroke.style, *position)?;
             }
         }
         ObjectKind::Shape {
@@ -1138,6 +1163,12 @@ fn validate_page_budget(page: &Page) -> Result<()> {
             ObjectKind::Stroke { points: p, .. } => points = points.saturating_add(p.len()),
             ObjectKind::Shape { points: p, .. } => points = points.saturating_add(p.len()),
             ObjectKind::Text { text: t, .. } => text = text.saturating_add(t.len()),
+            ObjectKind::Handwritten { strokes, .. } => {
+                validate_object(object)?;
+                for stroke in strokes {
+                    points = points.saturating_add(stroke.points.len());
+                }
+            }
             ObjectKind::Math { layout, size, .. } => {
                 validate_object(object)?;
                 text = text.saturating_add(MathBox::new(layout, *size)?.text_bytes());
@@ -1185,6 +1216,25 @@ pub fn object_bounds(object: &BoardObject) -> Rect {
                 bounds.extend_with(egui::pos2(point.x, point.y));
             }
             bounds.expand(style.width / 2.0)
+        }
+        ObjectKind::Handwritten {
+            position, strokes, ..
+        } => {
+            let mut bounds = Rect::NOTHING;
+            for stroke in strokes {
+                let mut stroke_bounds = Rect::NOTHING;
+                for point in &stroke.points {
+                    stroke_bounds
+                        .extend_with(egui::pos2(point.x + position.x, point.y + position.y));
+                }
+                // Pressure/velocity never exceed the pen width. Bounded joins extend
+                // up to width / sqrt(2); dash samples stay inside the input bbox.
+                // Selection must not tessellate arbitrarily long dashed segments.
+                bounds = bounds.union(
+                    stroke_bounds.expand(stroke.style.width * std::f32::consts::FRAC_1_SQRT_2),
+                );
+            }
+            bounds
         }
         ObjectKind::Text {
             position,
@@ -1313,7 +1363,24 @@ struct LineMeshes {
     transform: egui::emath::TSTransform,
     batches: Vec<(usize, usize, std::sync::Arc<egui::Mesh>)>,
 }
+fn mesh_buffer_bytes(mesh: &egui::Mesh) -> usize {
+    mesh.vertices
+        .capacity()
+        .saturating_mul(std::mem::size_of::<egui::epaint::Vertex>())
+        .saturating_add(
+            mesh.indices
+                .capacity()
+                .saturating_mul(std::mem::size_of::<u32>()),
+        )
+}
+
 impl LineMeshes {
+    fn buffer_bytes(&self) -> usize {
+        self.batches.iter().fold(0usize, |total, (_, _, mesh)| {
+            total.saturating_add(mesh_buffer_bytes(mesh))
+        })
+    }
+
     fn new(painter: &egui::Painter, scene: &Scene) -> Self {
         Self::transformed(painter, scene, egui::emath::TSTransform::IDENTITY)
     }
@@ -1605,7 +1672,9 @@ struct CachedObject {
 }
 
 const STROKE_BATCH_OBJECTS: usize = 64;
-// Aggregates add at most this much geometry to the existing per-object cache.
+// All retained page mesh vertex/index buffers share this cap, including aggregates.
+// Source snapshots, scenes, resources and egui's submitted frame Arcs are separate.
+const MAX_RETAINED_MESH_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STROKE_BATCH_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SOURCE_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 
@@ -1627,6 +1696,25 @@ fn source_snapshot_bytes(page: &Page) -> usize {
             ObjectKind::Shape { points, .. } => points.len() * std::mem::size_of::<Point>(),
             ObjectKind::Text { text, .. } => text.len(),
             ObjectKind::Math { layout, .. } => layout_bytes(layout),
+            ObjectKind::Handwritten {
+                text,
+                layout,
+                strokes,
+                ..
+            } => strokes.iter().fold(
+                text.len()
+                    .saturating_add(layout.as_ref().map_or(0, layout_bytes)),
+                |bytes, stroke| {
+                    bytes
+                        .saturating_add(std::mem::size_of::<board_core::HandwritingStroke>())
+                        .saturating_add(
+                            stroke
+                                .points
+                                .len()
+                                .saturating_mul(std::mem::size_of::<board_core::StrokePoint>()),
+                        )
+                },
+            ),
             ObjectKind::Image { asset_ref, .. } => asset_ref.len(),
             ObjectKind::FunctionPlot { expressions, .. } => expressions
                 .iter()
@@ -1684,6 +1772,7 @@ pub struct PageRenderer {
     batches_dirty: bool,
     visible_objects: u64,
     culled_objects: u64,
+    object_mesh_bytes: usize,
 }
 impl PageRenderer {
     pub fn new() -> Self {
@@ -1708,6 +1797,7 @@ impl PageRenderer {
         self.batches_dirty = true;
         self.visible_objects = 0;
         self.culled_objects = 0;
+        self.object_mesh_bytes = 0;
     }
 
     fn update_objects(&mut self, page: &Page) -> Result<()> {
@@ -1727,13 +1817,14 @@ impl PageRenderer {
             .eq(page.objects.iter().map(|o| o.id.as_str()))
         {
             self.order = page.objects.iter().map(|o| o.id.clone()).collect();
+            self.chunks.clear();
             self.batches_dirty = true;
         }
         self.objects.retain(|id, _| ids.contains(id.as_str()));
         self.plot_samples.retain_page(page);
         let mut primitives = 0usize;
         let mut stroke_points = 0usize;
-        for object in &page.objects {
+        for (object_index, object) in page.objects.iter().enumerate() {
             let hit = self
                 .objects
                 .get(&object.id)
@@ -1750,6 +1841,11 @@ impl PageRenderer {
             });
             if !hit {
                 self.batches_dirty = true;
+                // Release stale source Arcs as well as the aggregate before replacing
+                // object meshes, so the shared budget never misses hidden old buffers.
+                if let Some(chunk) = self.chunks.get_mut(object_index / STROKE_BATCH_OBJECTS) {
+                    *chunk = StrokeChunk::default();
+                }
                 let mut scene = Scene::default();
                 append_object(&mut scene, object, &mut self.plot_samples)?;
                 let mut bounds = object_bounds(object);
@@ -1781,6 +1877,32 @@ impl PageRenderer {
     }
 
     fn prepare_meshes(&mut self, painter: &egui::Painter) {
+        self.prepare_meshes_with_budget(painter, MAX_RETAINED_MESH_BYTES);
+    }
+
+    fn prepare_meshes_with_budget(&mut self, painter: &egui::Painter, budget: usize) {
+        // Key changes clear chunks in paint_cached. Discard obsolete offscreen
+        // meshes too: they must not accumulate as the viewport moves.
+        for entry in self.objects.values_mut() {
+            if entry.meshes.as_ref().is_some_and(|m| !m.matches(painter)) {
+                entry.meshes = None;
+            }
+        }
+        self.object_mesh_bytes = self
+            .objects
+            .values()
+            .filter_map(|entry| entry.meshes.as_ref())
+            .map(LineMeshes::buffer_bytes)
+            .sum();
+        let aggregate_bytes: usize = self.chunks.iter().map(|c| c.bytes).sum();
+        if self.object_mesh_bytes.saturating_add(aggregate_bytes) > budget {
+            self.chunks.clear();
+            for entry in self.objects.values_mut() {
+                entry.meshes = None;
+            }
+            self.object_mesh_bytes = 0;
+        }
+        let aggregate_bytes: usize = self.chunks.iter().map(|c| c.bytes).sum();
         let feather = stroke_feather(
             painter.ctx().tessellation_options(|options| *options),
             painter.ctx().pixels_per_point(),
@@ -1807,7 +1929,20 @@ impl PageRenderer {
             {
                 #[cfg(test)]
                 let start = std::time::Instant::now();
-                entry.meshes = Some(LineMeshes::new(painter, &entry.scene));
+                let meshes = LineMeshes::new(painter, &entry.scene);
+                let bytes = meshes.buffer_bytes();
+                if self
+                    .object_mesh_bytes
+                    .saturating_add(aggregate_bytes)
+                    .saturating_add(bytes)
+                    > budget
+                {
+                    // Keep the scene; paint_scene_with_meshes(None) renders it uncached.
+                    // Never omit geometry just because retaining its mesh is too costly.
+                    continue;
+                }
+                self.object_mesh_bytes += bytes;
+                entry.meshes = Some(meshes);
                 #[cfg(test)]
                 RENDER_DEBUG_METRICS.with(|metrics| {
                     let mut value = metrics.get();
@@ -1831,6 +1966,12 @@ impl PageRenderer {
     }
 
     fn prepare_chunks(&mut self, painter: &egui::Painter) {
+        self.prepare_chunks_with_budget(painter, MAX_RETAINED_MESH_BYTES);
+    }
+
+    fn prepare_chunks_with_budget(&mut self, painter: &egui::Painter, budget: usize) {
+        let aggregate_budget =
+            MAX_STROKE_BATCH_BYTES.min(budget.saturating_sub(self.object_mesh_bytes));
         let feather = stroke_feather(
             painter.ctx().tessellation_options(|options| *options),
             painter.ctx().pixels_per_point(),
@@ -1899,7 +2040,7 @@ impl PageRenderer {
                 let indices: usize = meshes.iter().flatten().map(|mesh| mesh.indices.len()).sum();
                 let required = vertices * std::mem::size_of::<egui::epaint::Vertex>()
                     + indices * std::mem::size_of::<u32>();
-                if meshes.len() == 1 || bytes + required > MAX_STROKE_BATCH_BYTES {
+                if meshes.len() == 1 || bytes.saturating_add(required) > aggregate_budget {
                     for mesh in meshes.iter().flatten().filter(|mesh| !mesh.is_empty()) {
                         chunk.commands.push(PagePaintCommand::Mesh(mesh.clone()));
                     }
@@ -1916,9 +2057,13 @@ impl PageRenderer {
                 for mesh in meshes.iter().flatten() {
                     merged.append_ref(mesh);
                 }
-                let allocated = merged.vertices.capacity()
-                    * std::mem::size_of::<egui::epaint::Vertex>()
-                    + merged.indices.capacity() * std::mem::size_of::<u32>();
+                let allocated = mesh_buffer_bytes(&merged);
+                if bytes.saturating_add(allocated) > aggregate_budget {
+                    for mesh in meshes.iter().flatten().filter(|mesh| !mesh.is_empty()) {
+                        chunk.commands.push(PagePaintCommand::Mesh(mesh.clone()));
+                    }
+                    continue;
+                }
                 bytes += allocated;
                 chunk.bytes += allocated;
                 chunk

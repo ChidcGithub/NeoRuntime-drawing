@@ -17,6 +17,14 @@
 *.pth
 *.part
 
+# API documentation stays local; distribution/legal evidence remains tracked.
+/api/
+# Keep internal notes and regenerated audit reports local; never blanket-ignore licenses.
+/.local/
+/docs/internal/
+*.local.md
+*.local.txt
+
 # Local diagnostics, agent memory, editor settings, and historical work notes
 /.dbg/
 /.workbuddy/
@@ -33,6 +41,7 @@
 /渲染排查进度.txt
 *.log
 *.ndjson
+*.stderr
 
 # Credentials and machine-local configuration
 .env
@@ -61,6 +70,3 @@ Thumbs.db
 Desktop.ini
 *.tmp
 *.bak
-
-# API documentation stays local
-/api/

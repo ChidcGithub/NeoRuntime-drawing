@@ -1,5 +1,7 @@
 #[path = "gui/capture.rs"]
 mod capture;
+#[path = "gui/handwriting_ui.rs"]
+mod handwriting_ui;
 #[path = "icons.rs"]
 mod icons;
 use crate::{AppMode, Result, editing, emit, features, transport_event};
@@ -530,8 +532,37 @@ struct Gesture {
 const PLOT_MERGE_LIMIT_HINT: &str = "合并超过 16 个不同表达式，仅移动并保留两图";
 
 type MathResult = std::result::Result<(String, Option<ObjectKind>), String>;
-type MathWork = (String, ContextToken, MathResult);
+type PersonalizedMathResult =
+    std::result::Result<(String, Option<ObjectKind>, Option<ObjectKind>), String>;
+type MathWork = (String, ContextToken, PersonalizedMathResult);
 type PlotWork = (ContextToken, BoardObject, features::IntersectionReport);
+
+fn personalize_math(
+    result: MathResult,
+    profile: Option<&crate::handwriting::Profile>,
+    font: Option<&board_render::HandwritingFont>,
+) -> PersonalizedMathResult {
+    let (text, object) = result?;
+    let Some(profile) = profile else {
+        return Ok((text, object, None));
+    };
+    let Some(kind) = object else {
+        return Ok((text, None, None));
+    };
+    if !matches!(kind, ObjectKind::Text { .. } | ObjectKind::Math { .. }) {
+        return Ok((text, Some(kind), None));
+    }
+    match profile.render_adaptive(&kind, &text, |ch| {
+        crate::handwriting_fallback::sample(ch, font)
+    }) {
+        Ok(handwritten) => Ok((text, Some(handwritten), Some(kind))),
+        Err(error) => Ok((
+            format!("{text}\n个人笔迹未应用，已保留标准字体：{error}"),
+            Some(kind),
+            None,
+        )),
+    }
+}
 
 struct PlotState {
     context: ContextToken,
@@ -587,6 +618,8 @@ struct BoardApp {
     derivative_at: f64,
     template_label: String,
     template_path: String,
+    handwriting: handwriting_ui::HandwritingUi,
+    handwriting_context: Option<(ContextToken, MathInput)>,
     ink_math_mode: InkMathMode,
     ink_ticket: Option<String>,
     calculating_ink: Option<Rect>,
@@ -838,7 +871,9 @@ impl BoardApp {
         incoming: Option<mpsc::Receiver<Message>>,
         export_resources: board_render::RenderResources,
     ) -> Self {
-        Self {
+        let mut handwriting = handwriting_ui::HandwritingUi::default();
+        handwriting.enabled = mode == AppMode::Blackboard;
+        let mut app = Self {
             mode,
             session,
             hosted,
@@ -891,6 +926,8 @@ impl BoardApp {
             derivative_at: 0.0,
             template_label: String::new(),
             template_path: String::new(),
+            handwriting,
+            handwriting_context: None,
             auto_gate: AutoCalculate::new(),
             recognizer: InkRecognizer::default(),
             hwr_backend: HwrBackend::Template,
@@ -926,7 +963,7 @@ impl BoardApp {
             split_drag: None,
             image_path: String::new(),
             renderer: board_render::PageRenderer::new(),
-            export_resources,
+            export_resources: Default::default(),
             captured_asset: None,
             capture_requests: HashMap::new(),
             capture_jobs: HashMap::new(),
@@ -940,8 +977,58 @@ impl BoardApp {
             applied_window_request: None,
             #[cfg(test)]
             emitted: Vec::new(),
-        }
+        };
+        app.replace_export_resources(export_resources);
+        app
     }
+
+    fn replace_export_resources(&mut self, resources: board_render::RenderResources) {
+        // Font snapshots have no identity API, including Some -> Some replacement.
+        self.handwriting.invalidate_context();
+        self.cancel_math();
+        self.export_resources = resources;
+    }
+}
+
+fn read_font(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    if file.metadata()?.len() > board_render::MAX_FONT_BYTES as u64 {
+        return Err(std::io::Error::other("字体超过 64 MiB"));
+    }
+    let mut bytes = Vec::new();
+    file.take(board_render::MAX_FONT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > board_render::MAX_FONT_BYTES {
+        return Err(std::io::Error::other("字体超过 64 MiB"));
+    }
+    Ok(bytes)
+}
+
+fn install_font(
+    ctx: &egui::Context,
+    resources: &mut board_render::RenderResources,
+    bytes: Vec<u8>,
+) -> board_render::Result<()> {
+    // Validate before cloning or handing untrusted font bytes to egui.
+    if bytes.len() > board_render::MAX_FONT_BYTES {
+        return Err(board_render::RenderError::ResourceLimit("字体超过 64 MiB"));
+    }
+    resources.set_font(bytes.clone(), 0)?;
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "system-chinese".into(),
+        egui::FontData::from_owned(bytes).into(),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, "system-chinese".into());
+    }
+    ctx.set_fonts(fonts);
+    Ok(())
 }
 
 fn load_font(ctx: &egui::Context) -> board_render::RenderResources {
@@ -951,24 +1038,11 @@ fn load_font(ctx: &egui::Context) -> board_render::RenderResources {
         r"C:\Windows\Fonts\simhei.ttf",
         r"C:\Windows\Fonts\simsun.ttc",
     ] {
-        if let Ok(bytes) = std::fs::read(path) {
-            if let Err(e) = resources.set_font(bytes.clone(), 0) {
-                eprintln!("导出字体不可用：{e}");
+        if let Ok(bytes) = read_font(std::path::Path::new(path)) {
+            match install_font(ctx, &mut resources, bytes) {
+                Ok(()) => return resources,
+                Err(e) => eprintln!("导出字体不可用：{e}"),
             }
-            let mut fonts = egui::FontDefinitions::default();
-            fonts.font_data.insert(
-                "system-chinese".into(),
-                egui::FontData::from_owned(bytes).into(),
-            );
-            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-                fonts
-                    .families
-                    .entry(family)
-                    .or_default()
-                    .insert(0, "system-chinese".into());
-            }
-            ctx.set_fonts(fonts);
-            return resources;
         }
     }
     eprintln!("未找到指定系统中文字体；界面使用内置字体。");
@@ -1185,6 +1259,7 @@ impl BoardApp {
             self.cancel_local_capture();
         }
         if replaced {
+            self.handwriting.invalidate_context();
             self.ink_cache.clear();
             self.textures.clear();
             self.renderer.clear();
@@ -1339,8 +1414,18 @@ impl BoardApp {
         self.math_input = Some(self.current_math_input());
         let context = ContextToken::capture(&self.session.document);
         self.math_result = "后台计算中；修改输入、换页或取消将丢弃结果".into();
-        self.math_worker
-            .start(ctx.clone(), move || (ticket, context, work()));
+        // Freeze local style and font once; later learning cannot mutate this answer.
+        // Profile validation bounds this clone to 65,536 sample points. The output
+        // alphabet is only known inside work(), so filtering here would lose glyphs.
+        let profile = self
+            .handwriting
+            .enabled
+            .then(|| self.handwriting.profile.clone());
+        let font = self.export_resources.handwriting_font();
+        self.math_worker.start(ctx.clone(), move || {
+            let result = personalize_math(work(), profile.as_ref(), font.as_ref());
+            (ticket, context, result)
+        });
     }
 
     fn poll_ink(
@@ -1361,14 +1446,20 @@ impl BoardApp {
         recognize: impl FnOnce(&[Vec<StrokePoint>]) -> HwrResult + Send + 'static,
     ) {
         let context = ContextToken::capture(&self.session.document);
-        if self.ink_math_mode == InkMathMode::Off
-            || !self.session.effective_visible()
+        if !self.session.effective_visible()
             || self.ink_context.as_ref().is_some_and(|old| old != &context)
         {
             self.cancel_ink();
             return;
         }
-        if !self.hwr_worker.busy()
+        if self.ink_math_mode == InkMathMode::Off {
+            // Off is the default steady state, not a user cancellation event.
+            // Manual math is independent of recognition and must survive polling.
+            self.cancel_recognition();
+            return;
+        }
+        if !self.math_worker.busy()
+            && !self.hwr_worker.busy()
             && !ctx.input(|i| i.pointer.any_down())
             && self.gesture.is_none()
             && let Some(request) = self.auto_gate.poll(now, &context)
@@ -1415,6 +1506,7 @@ impl BoardApp {
     fn poll_workers(&mut self, ctx: &egui::Context) {
         self.sync_ink_cache();
         if !self.session.effective_visible()
+            || self.compact_entry()
             || self.allow_close
             || self.confirm_close
             || self
@@ -1427,6 +1519,14 @@ impl BoardApp {
         {
             self.cancel_ink();
         }
+        if !self.session.effective_visible()
+            || self.compact_entry()
+            || self.allow_close
+            || self.confirm_close
+        {
+            self.plot_worker.cancel();
+            self.plot_points = None;
+        }
         poll_model_load(
             &mut self.model_loader,
             &mut self.neural_recognizer,
@@ -1435,12 +1535,7 @@ impl BoardApp {
             self.hwr_backend,
             &mut self.model_status,
         );
-        // Let this frame's canvas pen-down/settings actions invalidate work before delivery.
-        if ctx
-            .input(|i| i.pointer.any_down() || i.pointer.any_pressed() || i.pointer.any_released())
-        {
-            return;
-        }
+
         if self
             .math_input
             .as_ref()
@@ -1457,14 +1552,47 @@ impl BoardApp {
                 {
                     self.math_ticket = None;
                     match result {
-                        Ok((text, object)) => {
+                        Ok((mut text, object, fallback)) => {
                             if let Some(kind) = object {
-                                if let Some((id, epoch)) = self.running_candidate.take() {
-                                    if epoch == self.ink_cache.epoch {
-                                        self.add_candidate_result(&id, kind);
+                                let candidate = self.running_candidate.take();
+                                let insert = |app: &mut Self, kind| {
+                                    if let Some((id, epoch)) = &candidate {
+                                        if *epoch != app.ink_cache.epoch {
+                                            return None;
+                                        }
+                                        app.add_candidate_result(id, kind)
+                                    } else {
+                                        let revision = app.session.document.revision;
+                                        app.add(kind);
+                                        Some(app.session.document.revision != revision)
                                     }
-                                } else {
-                                    self.add(kind);
+                                };
+                                match insert(self, kind) {
+                                    Some(true) => {}
+                                    Some(false) => {
+                                        let error = self.status.clone();
+                                        // History failures are atomic; retry only the original
+                                        // standard answer, using the same candidate identity.
+                                        text = if let Some(standard) = fallback {
+                                            match insert(self, standard) {
+                                                Some(true) => format!(
+                                                    "{text}\n个人笔迹写入失败，已改用标准字体：{error}"
+                                                ),
+                                                Some(false) => format!(
+                                                    "个人笔迹写入失败：{error}\n标准答案写入失败：{}",
+                                                    self.status
+                                                ),
+                                                None => format!(
+                                                    "个人笔迹写入失败：{error}\n候选上下文已失效或结果已存在，未重试写入"
+                                                ),
+                                            }
+                                        } else {
+                                            error
+                                        };
+                                    }
+                                    None => {
+                                        text = "候选上下文已失效或结果已存在，未写入".into();
+                                    }
                                 }
                             }
                             self.status = text.clone();
@@ -1625,22 +1753,25 @@ impl BoardApp {
         true
     }
 
-    fn add_candidate_result(&mut self, id: &str, kind: ObjectKind) {
+    // None means no insertion was attempted, not a transaction failure to retry.
+    fn add_candidate_result(&mut self, id: &str, kind: ObjectKind) -> Option<bool> {
         self.sync_ink_cache();
-        let Some(entry) = self.ink_cache.get(id) else {
-            return;
-        };
-        if entry.result_present {
-            return;
+        let entry = self.ink_cache.get(id)?;
+        if entry.result_present
+            || entry.request.context.page_id != self.session.document.current_page().id
+        {
+            return None;
         }
         // This identity is already excluded from local validation before changed() runs.
         let result_id = entry.result_id.clone();
+        let revision = self.session.document.revision;
         self.apply(vec![Operation::Add {
             object: BoardObject {
                 id: result_id,
                 kind,
             },
         }]);
+        Some(self.session.document.revision != revision)
     }
 
     fn ink_started(&mut self) {
@@ -1657,11 +1788,15 @@ impl BoardApp {
     }
 
     fn cancel_ink(&mut self) {
+        self.cancel_math();
+        self.cancel_recognition();
+    }
+
+    fn cancel_recognition(&mut self) {
         self.save_candidate_edit();
         self.active_candidate = None;
         self.ink_sources.clear();
         self.ink_ticket = None;
-        self.cancel_math();
         self.hwr_worker.cancel();
         self.auto_gate.cancel();
         self.ink.clear();
@@ -1857,6 +1992,9 @@ impl BoardApp {
             self.cancel_authorization();
             self.split_drag = None;
             self.cancel_ink();
+            self.handwriting.invalidate_context();
+            self.plot_worker.cancel();
+            self.plot_points = None;
             // 原生命中检测由 logic 统一恢复，避免 egui 命令与 passthrough 缓存不同步。
             ctx.request_repaint();
         }
@@ -1865,7 +2003,11 @@ impl BoardApp {
         }
         if !ctx.egui_wants_keyboard_input() {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, Key::Z)) {
-                self.undo(false);
+                if self.math && self.handwriting.wants_sampling_undo(ctx) {
+                    self.handwriting.undo_sampling();
+                } else {
+                    self.undo(false);
+                }
             }
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, Key::Y)) {
                 self.undo(true);
@@ -2678,7 +2820,25 @@ impl BoardApp {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
     }
+    fn sync_handwriting_context(&mut self) {
+        let context = (self.math
+            && self.mode == AppMode::Blackboard
+            && self.session.effective_visible()
+            && !self.compact_entry())
+        .then(|| {
+            (
+                ContextToken::capture(&self.session.document),
+                self.current_math_input(),
+            )
+        });
+        if self.handwriting_context != context {
+            self.handwriting.invalidate_context();
+            self.handwriting_context = context;
+        }
+    }
+
     fn panels(&mut self, ctx: &egui::Context) {
+        self.sync_handwriting_context();
         if self.files {
             let mut open = true;
             egui::Window::new("文件：明确路径，不扫描个人文件")
@@ -2706,6 +2866,7 @@ impl BoardApp {
                                     .open_document(self.path.trim(), self.discard_load)
                                 {
                                     Ok(messages) => {
+                                        self.handwriting.invalidate_context();
                                         self.ink_cache.clear();
                                         self.messages(messages);
                                         self.selected = None;
@@ -2923,6 +3084,18 @@ impl BoardApp {
                             }
                         });
                     });
+                    self.sync_handwriting_context();
+                    let handwriting_font = self.export_resources.handwriting_font();
+                    if self.handwriting.ui(ui, handwriting_font.as_ref()) {
+                        self.cancel_math();
+                    }
+                    if let Some(ObjectKind::Handwritten { text, .. }) = self.selected.as_ref().and_then(|id| {
+                        self.session.document.current_page().objects.iter().find(|object| &object.id == id).map(|object| &object.kind)
+                    }) {
+                        ui.label("所选手写答案的标准文字：");
+                        ui.label(text);
+                        if ui.button("复制所选答案标准文字").clicked() { ui.ctx().copy_text(text.clone()); }
+                    }
                     if ui.text_edit_singleline(&mut self.expression).changed() { self.cancel_math(); self.hwr_worker.cancel(); }
                     if self.math_worker.busy() && ui.button("取消后台计算（不写回）").clicked() { self.cancel_math(); self.math_result = "已取消；旧工作排空前不启动新任务".into(); }
                     ui.label("二元二次求解仅给范围内数值候选，不保证全解。")
@@ -3017,6 +3190,7 @@ impl BoardApp {
                     }
                 });
             self.math = open;
+            self.sync_handwriting_context();
         }
         if self.confirm_close {
             egui::Window::new("有未保存的板书")
@@ -3367,7 +3541,7 @@ impl BoardApp {
                     y: bounds.bottom() + 20.0,
                 },
             );
-            self.add_candidate_result(&id, object.kind);
+            let _ = self.add_candidate_result(&id, object.kind);
         }
     }
 
@@ -3812,7 +3986,7 @@ impl BoardApp {
             .and_then(|erasing| erasing.result.as_ref())
             .and_then(|result| result.as_ref().ok())
             .map(|(document, _)| document.current_page());
-        let previewing = preview.is_some() || erased.is_some();
+        let previewing = preview.is_some() || erased.is_some() || vertex_edit.is_some();
         // #region debug-point B:canvas
         let debug_preview_us = debug_ink::micros(debug_preview_start);
         let debug_clone_start = debug_ink::start();
@@ -3891,7 +4065,7 @@ impl BoardApp {
                 &resources,
             )
         } else {
-            self.renderer.paint_page_at_revision(
+            self.renderer.paint_page_at_document_revision(
                 &painter,
                 &page,
                 (&self.session.document.id, self.session.document.revision),
@@ -4352,6 +4526,19 @@ impl BoardApp {
                 } else {
                     self.apply(vec![Operation::Add { object }]);
                 }
+                // Only successful fresh local pen commits teach style. Imports, replay,
+                // host operations, generated answers and moving old ink never enter here.
+                if self.mode == AppMode::Blackboard
+                    && self.tool == Tool::Pen
+                    && self.handwriting.enabled
+                    && self.session.document.revision != previous_revision
+                    && let Some(BoardObject {
+                        kind: ObjectKind::Stroke { points, style },
+                        ..
+                    }) = &source
+                {
+                    self.handwriting.profile.observe_stroke(points, *style);
+                }
                 if self.ink_math_mode != InkMathMode::Off
                     && self.session.document.revision != previous_revision
                     && let Some(stroke) = stroke
@@ -4463,17 +4650,10 @@ impl eframe::App for BoardApp {
                 }
             }
         }
-        let context = ContextToken::capture(&self.session.document);
-        if !self.session.effective_visible()
-            || self.compact_entry()
-            || self.ink_context.as_ref().is_some_and(|old| old != &context)
-        {
-            self.cancel_ink();
-        }
         // #region debug-point D:logic
         let debug_workers_start = debug_ink::start();
         // #endregion
-        self.poll_workers(ctx);
+        self.prepare_workers(ctx, Instant::now());
         // #region debug-point D:logic
         let debug_workers_us = debug_ink::micros(debug_workers_start);
         let debug_ink_start = debug_ink::start();
@@ -4488,7 +4668,6 @@ impl eframe::App for BoardApp {
         {
             self.cancel_job(&id);
         }
-        self.poll_backend_ink(ctx, Instant::now());
         ctx.request_repaint_after(Duration::from_millis(30));
         // #region debug-point D:logic
         let debug_ink_us = debug_ink::micros(debug_ink_start);
@@ -4548,7 +4727,43 @@ impl eframe::App for BoardApp {
 }
 
 impl BoardApp {
+    // The native logic phase and headless frame tests share this exact preparation
+    // path. It may submit HWR, but visible results are accepted only after UI input.
+    fn prepare_workers(&mut self, ctx: &egui::Context, now: Instant) {
+        let context = ContextToken::capture(&self.session.document);
+        if !self.session.effective_visible()
+            || self.compact_entry()
+            || self.allow_close
+            || self.ink_context.as_ref().is_some_and(|old| old != &context)
+        {
+            self.cancel_ink();
+        }
+        if !self.session.effective_visible() || self.compact_entry() || self.allow_close {
+            self.finish_worker_frame(ctx);
+            return;
+        }
+        if !self.confirm_close {
+            self.poll_backend_ink(ctx, now);
+        }
+    }
+
     fn board_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.board_ui_input(ui, ctx);
+        self.finish_worker_frame(ctx);
+    }
+
+    fn finish_worker_frame(&mut self, ctx: &egui::Context) {
+        self.sync_handwriting_context();
+        if self.handwriting.poll_after_ui() {
+            self.cancel_math();
+        }
+        // egui consumes keyboard events while building widgets. Poll unconditionally
+        // afterwards, not behind an input gate that can starve on held keys/pointers.
+        self.poll_workers(ctx);
+    }
+
+    fn board_ui_input(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.sync_handwriting_context();
         self.enforce_tool_mode();
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
             self.request_close(ctx);

@@ -24,7 +24,7 @@ impl Default for NumericOptions {
     }
 }
 impl NumericOptions {
-    fn validate(self) -> Result<Self> {
+    pub(crate) fn validate(self) -> Result<Self> {
         if !(8..=4096).contains(&self.steps)
             || !(32..=100000).contains(&self.max_evaluations)
             || !self.tolerance.is_finite()

@@ -224,6 +224,7 @@ pub fn translate(object: &mut BoardObject, delta: Point) {
         }
         ObjectKind::Text { position, .. }
         | ObjectKind::Math { position, .. }
+        | ObjectKind::Handwritten { position, .. }
         | ObjectKind::Image { position, .. }
         | ObjectKind::FunctionPlot { position, .. } => shift(position),
         ObjectKind::CoordinateSystem { origin, .. } => shift(origin),

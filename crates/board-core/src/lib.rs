@@ -16,7 +16,12 @@ pub use connections::{
 pub const MAX_PAGES: usize = 500;
 pub const MIN_BRUSH_WIDTH: f32 = 0.1;
 pub const MAX_BRUSH_WIDTH: f32 = 100.0;
-pub const FILE_VERSION: u32 = 2;
+pub const FILE_VERSION: u32 = 3;
+pub const MAX_HANDWRITING_TEXT_BYTES: usize = 4096;
+pub const MAX_HANDWRITING_STROKES: usize = 1024;
+pub const MAX_HANDWRITING_POINTS: usize = 32768;
+pub const MAX_HANDWRITING_COORD: f32 = 1_000_000.0;
+pub const MAX_HANDWRITING_TIME: f64 = 1e12;
 pub const MAX_MATH_DEPTH: usize = 32;
 pub const MAX_MATH_NODES: usize = 512;
 pub const MAX_MATH_TEXT_BYTES: usize = 4096;
@@ -85,6 +90,13 @@ impl Default for Style {
             dashed: false,
         }
     }
+}
+
+/// Frozen generated ink in local coordinates relative to its answer's position.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HandwritingStroke {
+    pub points: Vec<StrokePoint>,
+    pub style: Style,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -189,6 +201,13 @@ pub enum ObjectKind {
         layout: MathLayout,
         size: f32,
         color: Color,
+    },
+    /// One frozen answer; text and layout retain the original semantics, not rendering instructions.
+    Handwritten {
+        position: Point,
+        text: String,
+        layout: Option<MathLayout>,
+        strokes: Vec<HandwritingStroke>,
     },
     Image {
         position: Point,
@@ -361,6 +380,25 @@ impl BoardObject {
                                 && p.time.is_finite()
                                 && p.time >= 0.0
                                 && (0.0..=1.0).contains(&p.pressure)
+                        })
+                }
+                ObjectKind::Handwritten {
+                    position, strokes, ..
+                } => {
+                    let coord = |v: f32| v.is_finite() && v.abs() <= MAX_HANDWRITING_COORD;
+                    coord(position.x)
+                        && coord(position.y)
+                        && strokes.iter().all(|stroke| {
+                            !stroke.points.is_empty()
+                                && valid_style(&stroke.style)
+                                && stroke.points.iter().all(|p| {
+                                    coord(p.x)
+                                        && coord(p.y)
+                                        && coord(position.x + p.x)
+                                        && coord(position.y + p.y)
+                                        && (0.0..=MAX_HANDWRITING_TIME).contains(&p.time)
+                                        && (0.0..=1.0).contains(&p.pressure)
+                                })
                         })
                 }
                 ObjectKind::Shape { points, style, .. } => {
@@ -620,16 +658,16 @@ impl Document {
     }
     /// Smallest persisted schema capable of representing this document.
     pub fn file_version(&self) -> u32 {
-        if self
-            .pages
+        self.pages
             .iter()
             .flat_map(|page| &page.objects)
-            .any(|object| matches!(object.kind, ObjectKind::Math { .. }))
-        {
-            FILE_VERSION
-        } else {
-            1
-        }
+            .map(|object| match object.kind {
+                ObjectKind::Handwritten { .. } => 3,
+                ObjectKind::Math { .. } => 2,
+                _ => 1,
+            })
+            .max()
+            .unwrap_or(1)
     }
     pub fn to_json(&self) -> Result<String> {
         to_json(self)
@@ -823,7 +861,10 @@ pub fn from_json(json: &str) -> Result<Document> {
     }
     let file: FileDocument = serde_json::from_str(json)?;
     if u64::from(file.document.file_version()) > version {
-        return Err(Error::InvalidDocument("数学对象需要文件版本 2".into()));
+        return Err(Error::InvalidDocument(format!(
+            "对象需要文件版本 {}",
+            file.document.file_version()
+        )));
     }
     Ok(file.document)
 }

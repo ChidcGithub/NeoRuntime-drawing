@@ -1,11 +1,21 @@
 // Keep includes in the same module to preserve gui::tests paths and shared helpers.
 use super::*;
 
+include!("tests/handwriting_answers.rs");
+include!("tests/frame_order.rs");
+
 include!("tests/gpu_offscreen.rs");
 
 include!("tests/performance.rs");
 
 fn app() -> BoardApp {
+    let mut app = default_app();
+    // Legacy Math/Text tests exercise standard answers independently of handwriting.
+    app.handwriting.enabled = false;
+    app
+}
+
+fn default_app() -> BoardApp {
     let mut session = Session::new(AppMode::Blackboard.kind());
     session.handle(Request::new("neo:setup", "configure", serde_json::json!({"classroom_safe": true, "desktop_capture_allowed": false, "agent_allowed": false})).unwrap());
     BoardApp::new(
@@ -203,7 +213,10 @@ fn board_frame(
             events,
             ..Default::default()
         },
-        |ui| app.board_ui(ui, ctx),
+        |ui| {
+            app.prepare_workers(ctx, Instant::now());
+            app.board_ui(ui, ctx);
+        },
     );
     output.textures_delta.clear();
     output

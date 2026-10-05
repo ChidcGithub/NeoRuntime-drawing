@@ -123,13 +123,13 @@ pub(crate) fn load(path: &Path) -> Result<(Document, ResourceStore)> {
         if format != "board-session-package" {
             return Err(error("invalid_document", "未知文档包格式"));
         }
-        if !matches!(header.version, Some(1 | 2)) {
+        if !matches!(header.version, Some(1 | 2 | 3)) {
             return Err(error("unsupported_version", "不支持文档包版本"));
         }
         let package: Package =
             serde_json::from_str(&source).map_err(|_| error("invalid_document", "无效文档包"))?;
         if package.document.file_version() > package.version {
-            return Err(error("invalid_document", "数学对象需要文档包版本 2"));
+            return Err(error("invalid_document", "对象类型需要更高的文档包版本"));
         }
         package.document.validate().map_err(core_error)?;
         if package.resources.len() > 256 {

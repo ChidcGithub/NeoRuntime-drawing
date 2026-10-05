@@ -1,5 +1,423 @@
 use super::*;
 
+#[test]
+fn simple_numeric_roots_fit_feature_budget() {
+    let options = NumericOptions {
+        steps: 128,
+        max_evaluations: 2048,
+        ..Default::default()
+    };
+    for (input, root) in [
+        ("x", 0.0),
+        ("2*x+1", -0.5),
+        ("0.1*x+0.3", -3.0),
+        ("sqrt(2)*x+1", -1.0 / 2.0_f64.sqrt()),
+    ] {
+        let found = roots(input, -10.0, 10.0, options).unwrap();
+        assert_eq!(found.roots.len(), 1, "{input}: {found:?}");
+        assert!((found.roots[0] - root).abs() < 1e-7);
+    }
+    assert!(
+        curve_intersections("x", "x+1", -10.0, 10.0, options)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+fn intersection_points(first: &str, second: &str, bounds: Bounds2D) -> Vec<Point> {
+    match IntersectionCurve::parse(first)
+        .unwrap()
+        .intersections(
+            &IntersectionCurve::parse(second).unwrap(),
+            bounds,
+            NumericOptions {
+                steps: 128,
+                max_evaluations: 2000,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    {
+        CurveIntersection::Points(points) => points,
+        other => panic!("{first} / {second}: {other:?}"),
+    }
+}
+
+#[test]
+fn affine_plot_intersections_normalize_equations_and_numeric_coefficients() {
+    for (input, slope, intercept) in [
+        ("x", 1.0, 0.0),
+        ("y=x", 1.0, 0.0),
+        ("2*x+1", 2.0, 1.0),
+        ("y=2*x+1", 2.0, 1.0),
+        ("y=2x+1", 2.0, 1.0),
+        ("f(x)=2*x+1", 2.0, 1.0),
+        ("y-x=1", 1.0, 1.0),
+        ("2*y-4*x=2", 2.0, 1.0),
+        ("y=0.1*x+0.3", 0.1, 0.3),
+        ("y=sqrt(2)*x+1", 2.0_f64.sqrt(), 1.0),
+        ("y=sin(1)*x+1", 1.0_f64.sin(), 1.0),
+        ("1e-200*y-2e-200*x=1e-200", 2.0, 1.0),
+    ] {
+        for (axis, expected) in [
+            (
+                "y=0",
+                Point {
+                    x: -intercept / slope,
+                    y: 0.0,
+                },
+            ),
+            (
+                "x=0",
+                Point {
+                    x: 0.0,
+                    y: intercept,
+                },
+            ),
+            (
+                "x=2",
+                Point {
+                    x: 2.0,
+                    y: 2.0 * slope + intercept,
+                },
+            ),
+        ] {
+            for (first, second) in [(input, axis), (axis, input)] {
+                let points = intersection_points(first, second, plot_bounds());
+                assert_eq!(points.len(), 1, "{first} / {second}: {points:?}");
+                assert!(
+                    (points[0].x - expected.x).hypot(points[0].y - expected.y) < 1e-9,
+                    "{input}: {points:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn affine_parallel_coincident_and_bounds_are_not_sampled_guesses() {
+    for (first, second) in [
+        ("y=x", "y=x+1"),
+        ("y=x", "y=x+1e-7"),
+        ("x=2", "x=3"),
+        ("y=0", "y=1"),
+    ] {
+        assert!(intersection_points(first, second, plot_bounds()).is_empty());
+    }
+    for (first, second) in [
+        ("y=x", "2*y-2*x=0"),
+        ("x=2", "2*x=4"),
+        ("y=0", "x-x"),
+        ("y=0.1*x+0.3", "10*y=x+3"),
+    ] {
+        let result = IntersectionCurve::parse(first).unwrap().intersections(
+            &IntersectionCurve::parse(second).unwrap(),
+            plot_bounds(),
+            Default::default(),
+        );
+        // 十进制舍入不应用宽松 epsilon 强行当作重合。
+        if first.contains("0.1") {
+            assert!(!matches!(result, Ok(CurveIntersection::NonDiscrete)));
+        } else {
+            assert_eq!(result.unwrap(), CurveIntersection::NonDiscrete, "{first}");
+        }
+    }
+    let bounds = Bounds2D {
+        x_min: 1.0,
+        x_max: 2.0,
+        y_min: 1.0,
+        y_max: 3.0,
+    };
+    assert_eq!(
+        intersection_points("y=x+1", "x=2", bounds),
+        vec![Point { x: 2.0, y: 3.0 }]
+    );
+    for pair in [
+        ("y=x+1", "x=3"),
+        ("y=x+2", "x=2"),
+        ("x=0", "2*x=0"),
+        ("y=0", "x=2"),
+    ] {
+        assert!(intersection_points(pair.0, pair.1, bounds).is_empty());
+    }
+}
+
+#[test]
+fn plot_intersections_retain_nonlinear_domains_and_budgets() {
+    // 系数可消去，但在交点处原式仍会溢出，不得生成虚假候选。
+    assert!(matches!(
+        IntersectionCurve::parse("y=1e308*x-1e308*x+x")
+            .unwrap()
+            .intersections(
+                &IntersectionCurve::parse("x=2").unwrap(),
+                plot_bounds(),
+                Default::default(),
+            ),
+        Err(MathError::Domain(_))
+    ));
+    for bounds in [
+        Bounds2D {
+            x_min: 1.0,
+            x_max: -1.0,
+            ..plot_bounds()
+        },
+        Bounds2D {
+            y_min: f64::NAN,
+            ..plot_bounds()
+        },
+        Bounds2D {
+            x_max: 1e7,
+            ..plot_bounds()
+        },
+    ] {
+        assert!(matches!(
+            IntersectionCurve::parse("y=x").unwrap().intersections(
+                &IntersectionCurve::parse("x=2").unwrap(),
+                bounds,
+                Default::default(),
+            ),
+            Err(MathError::Domain(_))
+        ));
+    }
+    for (first, second, expected) in [
+        (
+            "y=x^2",
+            "y-x=2",
+            vec![Point { x: -1.0, y: 1.0 }, Point { x: 2.0, y: 4.0 }],
+        ),
+        ("f(x)=x^2", "x=2", vec![Point { x: 2.0, y: 4.0 }]),
+        ("y=1/x", "y=0", vec![]),
+    ] {
+        let found = intersection_points(first, second, plot_bounds());
+        assert_eq!(found.len(), expected.len(), "{first}: {found:?}");
+        for (point, expected) in found.iter().zip(expected) {
+            assert!((point.x - expected.x).hypot(point.y - expected.y) < 1e-7);
+        }
+    }
+    for input in ["y=1/x", "y=x/x", "y=x^0", "y=sqrt(x)"] {
+        let x = if input.contains("sqrt") {
+            "x=-1"
+        } else {
+            "x=0"
+        };
+        assert!(
+            matches!(
+                IntersectionCurve::parse(input).unwrap().intersections(
+                    &IntersectionCurve::parse(x).unwrap(),
+                    plot_bounds(),
+                    Default::default(),
+                ),
+                Err(MathError::Domain(_))
+            ),
+            "{input}"
+        );
+    }
+    assert!(matches!(
+        IntersectionCurve::parse("y=x^2").unwrap().intersections(
+            &IntersectionCurve::parse("y=x").unwrap(),
+            plot_bounds(),
+            NumericOptions {
+                max_evaluations: 32,
+                ..Default::default()
+            },
+        ),
+        Err(MathError::Limit(_))
+    ));
+    assert!(matches!(
+        IntersectionCurve::parse("x").unwrap().intersections(
+            &IntersectionCurve::parse("x=2").unwrap(),
+            plot_bounds(),
+            NumericOptions {
+                max_evaluations: 0,
+                ..Default::default()
+            },
+        ),
+        Err(MathError::Limit(_))
+    ));
+    for input in ["y=", "y=x=1", "f(x)=", "y=x+"] {
+        assert!(
+            matches!(IntersectionCurve::parse(input), Err(MathError::Syntax(_))),
+            "{input}"
+        );
+    }
+    for input in ["y^2=x", "x^2+y^2=1", "sin(y)=x", "y=y", "y=y+1"] {
+        assert!(
+            matches!(
+                IntersectionCurve::parse(input),
+                Err(MathError::Unsupported(_))
+            ),
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn plot_intersection_clipping_only_allows_a_few_boundary_ulps() {
+    let bounds = Bounds2D {
+        x_min: -1.0,
+        x_max: 2.0,
+        y_min: -1.0,
+        y_max: 0.3,
+    };
+    for (first, second) in [(".1*x+.2", "x=1"), ("x=1", ".1*x+.2"), (".1*x^2+.2", "x=1")] {
+        let points = intersection_points(first, second, bounds);
+        assert!(
+            points
+                .iter()
+                .any(|p| (p.x - 1.0).abs() < 1e-7 && p.y == 0.3),
+            "{first} / {second}: {points:?}"
+        );
+        assert!(points.iter().all(|p| p.y <= bounds.y_max));
+    }
+    let numeric = intersection_points(
+        ".1*x^2+.2",
+        ".1*x+.2",
+        Bounds2D {
+            x_min: -2.0,
+            ..bounds
+        },
+    );
+    assert!(numeric.contains(&Point { x: 1.0, y: 0.3 }), "{numeric:?}");
+    for border in [0.3_f64, -0.3_f64, 0.0_f64] {
+        let mut outside = border;
+        for _ in 0..16 {
+            outside = outside.next_up();
+        }
+        let line = format!("y={outside}");
+        let result = IntersectionCurve::parse(&line)
+            .unwrap()
+            .intersections(
+                &IntersectionCurve::parse("x=1").unwrap(),
+                Bounds2D {
+                    y_max: border,
+                    ..bounds
+                },
+                NumericOptions {
+                    tolerance: 1e-3,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(result, CurveIntersection::Points(vec![]), "{line}");
+    }
+    assert_eq!(
+        intersection_points(
+            "y=-.1*x-.2",
+            "x=1",
+            Bounds2D {
+                y_min: -0.3,
+                ..plot_bounds()
+            }
+        ),
+        vec![Point { x: 1.0, y: -0.3 }]
+    );
+    assert_eq!(
+        intersection_points(
+            "x=.1+.2",
+            "y=1",
+            Bounds2D {
+                x_max: 0.3,
+                ..plot_bounds()
+            }
+        ),
+        vec![Point { x: 0.3, y: 1.0 }]
+    );
+    // A broad user tolerance must not validate a snapped point on a steep line.
+    assert!(matches!(
+        IntersectionCurve::parse("y=1e16*(x-.30000000000000004)")
+            .unwrap()
+            .intersections(
+                &IntersectionCurve::parse("y=0").unwrap(),
+                Bounds2D {
+                    x_max: 0.3,
+                    ..plot_bounds()
+                },
+                NumericOptions {
+                    tolerance: 1e-3,
+                    ..Default::default()
+                },
+            ),
+        Err(MathError::Numerical(_))
+    ));
+}
+
+#[test]
+fn numeric_plot_intersections_verify_original_implicit_ast() {
+    for (first, second) in [
+        ("y-2*x=1e308*x-1e308*x", "y=x^2"),
+        ("y=x^2", "y-2*x=1e308*x-1e308*x"),
+    ] {
+        assert!(
+            matches!(
+                IntersectionCurve::parse(first).unwrap().intersections(
+                    &IntersectionCurve::parse(second).unwrap(),
+                    plot_bounds(),
+                    NumericOptions {
+                        steps: 128,
+                        max_evaluations: 2048,
+                        ..Default::default()
+                    },
+                ),
+                Err(MathError::Domain(_))
+            ),
+            "{first} / {second}"
+        );
+    }
+    let points = intersection_points("y-2*x=0", "y=x^2", plot_bounds());
+    assert_eq!(points.len(), 2);
+    assert!(points.iter().any(|p| (p.x - 2.0).hypot(p.y - 4.0) < 1e-7));
+}
+
+#[test]
+fn coincident_lines_clipped_to_a_corner_are_singletons() {
+    let bounds = Bounds2D {
+        x_min: 0.0,
+        x_max: 1.0,
+        y_min: 0.0,
+        y_max: 1.0,
+    };
+    for (first, second, expected) in [
+        ("x+y=2", "2*x+2*y=4", Point { x: 1.0, y: 1.0 }),
+        ("x+y=0", "2*x+2*y=0", Point { x: 0.0, y: 0.0 }),
+        ("x-y=1", "2*x-2*y=2", Point { x: 1.0, y: 0.0 }),
+        ("x-y=-1", "2*x-2*y=-2", Point { x: 0.0, y: 1.0 }),
+    ] {
+        for (first, second) in [(first, second), (second, first)] {
+            assert_eq!(intersection_points(first, second, bounds), vec![expected]);
+        }
+    }
+    for (first, second) in [
+        ("x+y=1", "2*x+2*y=2"),
+        ("x=1", "2*x=2"),
+        ("y=0", "2*y=0"),
+        ("x+y=1.999999999999", "x+y=1.999999999999"),
+    ] {
+        assert_eq!(
+            IntersectionCurve::parse(first)
+                .unwrap()
+                .intersections(
+                    &IntersectionCurve::parse(second).unwrap(),
+                    bounds,
+                    Default::default(),
+                )
+                .unwrap(),
+            CurveIntersection::NonDiscrete,
+            "{first}"
+        );
+    }
+    assert!(intersection_points("x+y=2.000000000001", "x+y=2.000000000001", bounds).is_empty());
+    assert!(matches!(
+        IntersectionCurve::parse("x+y=2+1e308*(x+y)-1e308*(x+y)")
+            .unwrap()
+            .intersections(
+                &IntersectionCurve::parse("x+y=2").unwrap(),
+                bounds,
+                Default::default(),
+            ),
+        Err(MathError::Domain(_))
+    ));
+}
+
 fn plot_bounds() -> Bounds2D {
     Bounds2D {
         x_min: -10.0,

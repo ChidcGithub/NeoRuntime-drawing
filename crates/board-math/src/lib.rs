@@ -21,7 +21,9 @@ pub use numeric::{
     Bounds2D, NumericOptions, Point, RootSearch, SampledCurve, SystemSearch, curve_intersections,
     derivative, integrate, roots, sample, solve_quadratic_system,
 };
-pub use plot::{PlotKind, classify_plot, plot_expression, sample_plot};
+pub use plot::{
+    CurveIntersection, IntersectionCurve, PlotKind, classify_plot, plot_expression, sample_plot,
+};
 use std::fmt;
 
 pub const MAX_INPUT_BYTES: usize = 4096;

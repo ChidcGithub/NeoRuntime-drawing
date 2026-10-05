@@ -1,4 +1,4 @@
-use super::{ImageResources, RenderError, Result, export_rect};
+use super::{HandwritingFont, ImageResources, RenderError, Result, export_rect};
 use ab_glyph::{Font, FontArc, FontVec};
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -20,6 +20,7 @@ pub(crate) struct ImageResource {
 pub struct RenderResources {
     pub(crate) images: HashMap<String, ImageResource>,
     pub(crate) font: Option<FontArc>,
+    handwriting_font: Option<HandwritingFont>,
     pixels: u64,
     bytes: usize,
 }
@@ -36,12 +37,23 @@ impl RenderResources {
         }
         let font = FontVec::try_from_vec_and_index(bytes, face_index)
             .map_err(|_| RenderError::InvalidFont)?;
-        self.font = Some(FontArc::new(font));
+        let font = FontArc::new(font);
+        self.handwriting_font = Some(HandwritingFont::new(font.clone()));
+        self.font = Some(font);
         Ok(())
     }
 
     pub fn clear_font(&mut self) {
         self.font = None;
+        self.handwriting_font = None;
+    }
+
+    /// Shares the current font and its bounded unstyled glyph cache, never textures.
+    /// Successful set_font starts a new cache generation (even for identical bytes);
+    /// failed set_font preserves it. clear_font detaches it. Existing snapshots retain
+    /// their old font/cache until dropped. This clone never locks the sampling cache.
+    pub fn handwriting_font(&self) -> Option<HandwritingFont> {
+        self.handwriting_font.clone()
     }
 
     /// 严格解码静态 PNG，去掉附加元数据并规范化为 RGBA；替换操作失败不影响旧资源。

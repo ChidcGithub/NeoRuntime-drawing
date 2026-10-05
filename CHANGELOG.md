@@ -1,6 +1,60 @@
 # Changelog
 
-This file describes the public prerelease scope in English and Chinese. v0.0.1 is the initial prerelease: the features and fixes below describe the implementation included in that initial baseline, not changes from a fictional previous published release. Publication and tagging are separate maintainer actions described in [RELEASING.md](RELEASING.md).
+This file records changes in English and Chinese. Unreleased describes work after the initial source-prerelease baseline; the v0.0.1 section and its validation record remain historical. Publication and tagging are separate maintainer actions described in [RELEASING.md](RELEASING.md).
+
+## Unreleased
+
+### English
+
+#### Personal handwritten answers and fixes
+
+- Add experimental local personal-style answers, enabled by default independently of HWR (still off by default). Newly committed local pen strokes update bounded numeric style statistics; exact-glyph samples remain optional and manually labelled. Calculation/write-back still requires a click; host Agent answers are not personalized. No neural training, model download, or new RPC is introduced.
+- Fix input/result ordering: keyboard edits, Esc, and relevant pointer/settings changes are handled before already-ready background results in the same frame. Held input does not indefinitely block result draining; sampling-area Ctrl+Z takes priority over document undo while a draft is active and text input is not focused.
+- Align synthesized fraction bars and operators on a shared math axis. Account for clamped pen width and bounded miter joins in spacing; preserve lowercase metrics so `o` differs in size from `0`, and use a hooked `x` distinct from `×`. These changes do not guarantee visually unambiguous handwriting.
+- Move handwriting preview generation and profile JSON I/O to one shared background slot without a queue. Reject stale preview/load results after relevant context changes and reuse cached preview meshes on idle frames; previews do not modify the document or learning statistics.
+- Profile save/load still requires an explicit local path and overwrite/replacement confirmation. An authorized save writes the click-time snapshot asynchronously: closing the panel or editing the profile does not interrupt an in-progress write, and later edits are not included. There is no automatic profile persistence or loading.
+- Cache unstyled font skeletons and failure results per loaded font generation, shared by its snapshots: at most 128 characters, 65,536 points, and 2 MiB of accounted entry payload. Successful font replacement starts a new generation; outstanding snapshots can retain the old one. Missing/over-budget glyphs preserve the entire standard-rendered answer with a diagnostic, rather than partial personalization.
+
+#### Straight-line intersections, rendering, and persistence
+
+- Extend plot **求点** to straight lines written as `y=2x+1`, `f(x)=2x+1`, `y-x=1`, or manually plotted `x=2`, including coordinate-axis intersections and mixtures with supported explicit functions. Parallel lines return no pairwise point; coincident lines sharing a segment within the rectangle report non-discrete intersections; contact at only one rectangle corner returns that single point.
+- Line/line intersections use analytic **f64 floating-point** formulas, not exact rational arithmetic. Near-singular systems and evaluation/residual failures can report errors. Vertical-line/explicit-function pairs evaluate at the fixed x; other explicit pairs retain bounded, incomplete numerical search, with candidates clipped to both plot axes.
+- Fix boundary clipping to absorb at most four ULPs of floating-point rounding, preserving decimal boundary intersections such as `0.1*x+0.2` at `x=1`, `y_max=0.3`. Clamped points must pass machine-precision-scale residual checks; the root-finding tolerance does not enlarge the rectangle. Numerical-search candidates are also rechecked against both original expression ASTs, preserving their domain and arithmetic-error checks.
+- General implicit quadratics remain unsupported for 求点. An unsupported curve among the inspected first 16 prevents the whole-plot search; the explicit subset is not presented as a complete result. Larger plots receive a limit diagnostic. This does not add an RPC or expand `math.calculate`.
+- Render committed pages using document-revision caching, keeping temporary gesture previews separate. Bound retained page mesh vertex/index buffers, including aggregate batches, to 64 MiB per page renderer. This is **not a global RAM cap**: source snapshots, scenes, resources, submitted frames, other caches, and application state are separate. Bound GUI font-file reads to 64 MiB and validate font data before installation.
+- Read document/package versions v1/v2/v3 and save the smallest required version: `Handwritten` → v3; otherwise `Math` → v2; otherwise v1. Images only determine resource packaging. Frozen whole-answer strokes, standard text, and optional math layout survive reopening without a profile; older v1/v2 readers cannot read v3. Profile JSON versions are separate; JSON Lines remains version 1.
+
+#### Validation record and remaining acceptance
+
+- **Final verification record (reported by the maintainer):** `cargo test --workspace --locked --quiet` completed with **663 passed, 12 ignored, 0 failed**; `cargo fmt --all --check` and `git diff --check` passed. Release builds of both `neo-drawing` and `neo-blackboard` succeeded in **2m 23s**. Ignored tests are not counted as passed. The v0.0.1 test/build record below remains historical; these results were not rerun for this documentation-only update.
+- Native GUI checks remain pending for keyboard/cancellation ordering, preview/profile workflows, handwritten math and complex Chinese readability, and straight-line 求点. Target i5/3 GB responsiveness and whole-machine memory measurements remain pending; bounded caches do not establish target-machine acceptance.
+- No release, tag, publication, or new license/provenance clearance is asserted here.
+
+### 中文
+
+#### 个人笔迹答案与修复
+
+- 新增实验性本地个人风格答案，默认开启，与仍默认关闭的 HWR 独立。仅新提交的本地画笔笔划更新有界数值风格统计；精确字形样本仍是可选、人工标注流程。计算/写板仍须点击，不个性化宿主 Agent 回答；不新增神经训练、模型下载或 RPC。
+- 修复输入与结果接收顺序：同帧键盘编辑、Esc 及相关指针/设置变更先于已经就绪的后台结果处理。持续按住输入不再无限阻塞结果排空；采样草稿存在且文本输入未聚焦时，采样区 Ctrl+Z 优先于文档撤销。
+- 合成分数横线与运算符使用共同数学轴；字距计入限幅笔宽及有界斜接（miter）外扩。保留小写字母尺寸，使 `o` 小于 `0`，并使用区别于 `×` 的带钩 `x`；不保证所有手写字形均无视觉歧义。
+- 笔迹预览生成与档案 JSON I/O 改为共享单槽后台执行、无排队；相关上下文变化后丢弃过期预览/加载结果，空闲帧复用预览网格。预览不修改文档或学习统计。
+- 档案保存/加载仍须明确本地路径及覆盖/替换确认。已授权保存异步写入点击时快照：关闭面板或修改档案不会中断已开始的写入，也不包含之后的修改；无自动档案持久化或加载。
+- 未应用个人风格的字体骨架与失败结果按已加载字体代次缓存，同代次快照共享；最多128字符、65,536点、2 MiB计账条目负载。成功替换字体开启新代次，尚存快照可保留旧代次。缺字或超预算时整个答案保留标准渲染并提示诊断，不生成半份个人笔迹。
+
+#### 直线求点、渲染与持久化
+
+- 图像“求点”扩展到 `y=2x+1`、`f(x)=2x+1`、`y-x=1` 及手动绘制的 `x=2` 等直线，支持坐标轴交点和与受支持显函数混合求交。平行线不产生两线交点；重合线与矩形范围共有线段时报告非离散交点，仅接触矩形一个角点时返回该单点。
+- 两直线使用解析公式，但运算仍为 **f64浮点数**，不是精确有理数算法。近奇异系统、求值或残差校验失败可报错。竖线与显函数在固定 x 求值；其余显函数对仍使用有界、不完备的数值搜索，候选按 x/y 两轴范围裁剪。
+- 修复边界裁剪：最多吸收4 ULP的浮点舍入，保留 `0.1*x+0.2` 在 `x=1`、`y_max=0.3` 等小数边界交点。钳制后的点须通过机器精度级残差校验，不使用求根容差扩大矩形；数值搜索候选也重新校验双方原始表达式AST，保留其定义域及算术错误检查。
+- 一般隐式二次曲线仍不支持“求点”。所检查的前16条曲线中出现不支持项时不执行整图搜索，不将显函数子集冒充完整结果；更多曲线给出上限诊断。不新增 RPC，也不扩展 `math.calculate`。
+- 已提交页面采用文档 revision 渲染缓存，临时手势预览单独处理。每个页面渲染器保留的网格顶点/索引缓冲（含聚合批次）预算为64 MiB；这**不是全局 RAM 上限**，来源快照、场景、资源、已提交帧、其他缓存及应用状态另计。GUI 字体文件读取限制为64 MiB，安装前校验字体数据。
+- 文档/资源包读取 v1/v2/v3，按内容选择最小保存版本：含 `Handwritten` 为v3，否则含 `Math` 为v2，其余为v1；图片仅决定资源打包。冻结整答案笔划、标准文字及可选数学布局重开无需档案，旧v1/v2程序不能读取v3。档案JSON版本独立，JSON Lines仍为version 1。
+
+#### 验证记录与待完成验收
+
+- **最终实跑记录（维护者提供）**：`cargo test --workspace --locked --quiet` 为 **663 passed、12 ignored、0 failed**；`cargo fmt --all --check` 与 `git diff --check` 通过。`neo-drawing` 和 `neo-blackboard` 的 release 构建均成功，耗时 **2分23秒**。ignored 测试不计为通过。下方v0.0.1测试/构建记录保持历史性质；本轮仅更新文档，未重新运行这些测试或构建。
+- 键盘/取消顺序、预览/档案流程、手写数学与复杂汉字可读性、直线求点仍待原生GUI人工验收；目标i5/3 GB响应速度及整机内存测量仍待完成。有界缓存不证明目标机器达标。
+- 本节不宣称已创建发布/标签、已公开发布或新增任何许可/来源核查结论。
 
 ## v0.0.1 — Initial source prerelease
 
@@ -64,7 +118,7 @@ This file describes the public prerelease scope in English and Chinese. v0.0.1 i
 - Document formats v1 and v2 are readable. Two-dimensional math objects require v2, which older v1-only readers cannot read. Images use resource packages; implicit plots alone do not change the file version. Undo history, recognition candidates, permissions, window state, and pending tasks are not persisted.
 - Disconnection attempts recovery saving under `NeoRuntime-drawing/recovery` in `LOCALAPPDATA`, falling back to the system temporary directory. Paths/failures go to stderr. Recovery files are not automatically scanned or reopened, and disk errors can prevent recovery.
 - No arguments/help/version open no GUI. `--gui`, `--gui --hosted`, and `--headless` provide the implemented launch modes. Hosted GUI waits for configuration before creating a native window; help/version/logs use stderr and stdout is reserved for JSON Lines.
-- Protocol v1 uses bounded JSON Lines frames, document-level revisions, atomic object operations, paginated/chunked reads, PNG resource checks, and persistent connections. Clients must inspect actual `ready.methods`; GUI/library features do not imply new RPCs. See the [protocol](api/PROTOCOL.md) and [API reference](api/DRAWING_API.md).
+- Protocol v1 uses bounded JSON Lines frames, document-level revisions, atomic object operations, paginated/chunked reads, PNG resource checks, and persistent connections. Clients must inspect actual `ready.methods`; GUI/library features do not imply new RPCs. The protocol and API reference are now maintained in the local-only `api/` directory, excluded from current public checkouts.
 
 #### Fixes included in the initial baseline
 
@@ -146,7 +200,7 @@ These are fixes made during initial development, not regressions relative to a p
 - 支持读取文档 v1/v2。二维 Math 对象要求 v2，旧的仅 v1 阅读器不能读取；图片使用资源包，隐式图本身不升级文件版本。撤销历史、识别候选、权限、窗口状态及未完成任务不写入文档。
 - 断连时尝试在 `LOCALAPPDATA` 下的 `NeoRuntime-drawing/recovery` 保存恢复文件，缺失时回退到系统临时目录；路径或失败写 stderr。不自动扫描/重开，磁盘错误可能导致恢复失败。
 - 无参数/help/version 不启动 GUI。支持 `--gui`、`--gui --hosted`、`--headless`；hosted GUI 等待配置后才创建原生窗口。帮助/版本/日志使用 stderr，stdout 仅用于 JSON Lines。
-- 协议 v1 实现有界帧、文档级 revision、原子对象操作、分页/分块读取、PNG 校验和持久连接。调用方应检查实际 `ready.methods`；GUI/库功能不自动等于新增 RPC。详见[协议](api/PROTOCOL.md)和 [API](api/DRAWING_API.md)。
+- 协议 v1 实现有界帧、文档级 revision、原子对象操作、分页/分块读取、PNG 校验和持久连接。调用方应检查实际 `ready.methods`；GUI/库功能不自动等于新增 RPC。协议和 API 参考现保留在本地 `api/` 目录，不包含在当前公开检出中。
 
 #### 初始开发阶段已纳入的修复
 

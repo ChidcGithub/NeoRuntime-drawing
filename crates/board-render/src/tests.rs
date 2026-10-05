@@ -5,6 +5,339 @@ fn append_object(scene: &mut Scene, object: &BoardObject) -> Result<()> {
     super::append_object(scene, object, &mut PlotSamplesCache::default())
 }
 
+fn handwritten_kind(dashed: bool) -> ObjectKind {
+    ObjectKind::Handwritten {
+        position: p(24.0, 32.0),
+        text: "semantic only <&>\u{0}".into(),
+        layout: Some(fraction()),
+        strokes: vec![
+            board_core::HandwritingStroke {
+                points: vec![
+                    StrokePoint {
+                        x: 0.0,
+                        y: 0.0,
+                        time: 0.1,
+                        pressure: 0.2,
+                    },
+                    StrokePoint {
+                        x: 20.0,
+                        y: 12.0,
+                        time: 0.2,
+                        pressure: 0.9,
+                    },
+                    StrokePoint {
+                        x: 40.0,
+                        y: 0.0,
+                        time: 0.4,
+                        pressure: 0.6,
+                    },
+                ],
+                style: Style {
+                    width: 8.0,
+                    dashed,
+                    ..Style::default()
+                },
+            },
+            board_core::HandwritingStroke {
+                points: vec![StrokePoint {
+                    x: 20.0,
+                    y: 24.0,
+                    time: 0.5,
+                    pressure: 0.7,
+                }],
+                style: Style::default(),
+            },
+        ],
+    }
+}
+
+#[test]
+fn handwritten_scene_bounds_translation_and_frozen_samples() {
+    for dashed in [false, true] {
+        let original = object(handwritten_kind(dashed));
+        let mut scene = Scene::default();
+        append_object(&mut scene, &original).unwrap();
+        let bounds = object_bounds(&original);
+        let mut expected = Rect::NOTHING;
+        for item in &scene.items {
+            expected = expected.union(match item {
+                Primitive::Stroke(stroke) => {
+                    let mut mesh = egui::Mesh::default();
+                    stroke.mesh_full(egui::emath::TSTransform::IDENTITY, 0.0, &mut mesh);
+                    for vertex in mesh.vertices {
+                        assert!(bounds.contains(vertex.pos));
+                    }
+                    stroke.bounds
+                }
+                Primitive::Disk(center, radius, _) => {
+                    Rect::from_center_size(*center, Vec2::splat(radius * 2.0))
+                }
+                _ => panic!("semantic metadata must not generate visual primitives"),
+            });
+        }
+        assert!(bounds.contains_rect(expected));
+        assert!(
+            bounds.contains(egui::pos2(44.0, 50.0)),
+            "whole answer bounds include gaps"
+        );
+        let mut moved = original.clone();
+        let delta = egui::vec2(8.0, 16.0);
+        if let ObjectKind::Handwritten { position, .. } = &mut moved.kind {
+            position.x += delta.x;
+            position.y += delta.y;
+        }
+        let mut moved_scene = Scene::default();
+        append_object(&mut moved_scene, &moved).unwrap();
+        assert!((object_bounds(&moved).min - bounds.translate(delta).min).length() < 0.0001);
+        assert!((object_bounds(&moved).max - bounds.translate(delta).max).length() < 0.0001);
+        assert_eq!(scene.items.len(), moved_scene.items.len());
+        for (old, new) in scene.items.iter().zip(&moved_scene.items) {
+            match (old, new) {
+                (Primitive::Stroke(a), Primitive::Stroke(b)) => {
+                    assert_eq!(a.widths, b.widths);
+                    assert_eq!(a.color, b.color);
+                    for (a, b) in a.points.iter().zip(&b.points) {
+                        assert!((*a + delta - *b).length() < 0.0001);
+                    }
+                }
+                (Primitive::Disk(a, ra, ca), Primitive::Disk(b, rb, cb)) => {
+                    assert_eq!(*a + delta, *b);
+                    assert_eq!((ra, ca), (rb, cb));
+                }
+                _ => panic!("translation changed geometry"),
+            }
+        }
+        if let (
+            ObjectKind::Handwritten { strokes: a, .. },
+            ObjectKind::Handwritten { strokes: b, .. },
+        ) = (&original.kind, &moved.kind)
+        {
+            assert_eq!(a, b);
+        }
+    }
+}
+
+#[test]
+fn handwritten_long_dashed_bounds_do_not_depend_on_tessellation_budget() {
+    let mut answer = object(ObjectKind::Handwritten {
+        position: p(8.0, 16.0),
+        text: String::new(),
+        layout: None,
+        strokes: vec![board_core::HandwritingStroke {
+            points: vec![
+                StrokePoint {
+                    x: 0.0,
+                    y: 0.0,
+                    time: 0.0,
+                    pressure: 1.0,
+                },
+                StrokePoint {
+                    x: 900_000.0,
+                    y: 0.0,
+                    time: 1.0,
+                    pressure: 1.0,
+                },
+            ],
+            style: Style {
+                width: 0.1,
+                dashed: true,
+                ..Style::default()
+            },
+        }],
+    });
+    answer.validate().unwrap();
+    let expected = Rect::from_min_max(egui::pos2(8.0, 16.0), egui::pos2(900_008.0, 16.0))
+        .expand(0.1 * std::f32::consts::FRAC_1_SQRT_2);
+    assert_eq!(object_bounds(&answer), expected);
+    // Four traversals exceed Scene's generated-sample budget, but selection
+    // still only needs to visit five input points, not build any dash runs.
+    if let ObjectKind::Handwritten { strokes, .. } = &mut answer.kind {
+        let a = strokes[0].points[0];
+        let b = strokes[0].points[1];
+        strokes[0].points.extend([a, b, a]);
+    }
+    answer.validate().unwrap();
+    assert_eq!(object_bounds(&answer), expected);
+    if let ObjectKind::Handwritten { strokes, .. } = &mut answer.kind {
+        strokes[0].style.dashed = false;
+    }
+    assert_eq!(object_bounds(&answer), expected);
+}
+
+#[test]
+fn handwritten_conservative_bounds_cover_sharp_joins_dots_and_cached_geometry() {
+    for dashed in [false, true] {
+        let mut answer = object(handwritten_kind(dashed));
+        if let ObjectKind::Handwritten { strokes, .. } = &mut answer.kind {
+            strokes[0].style.width = board_core::MAX_BRUSH_WIDTH;
+            strokes[0].points = [
+                (0.0, 0.0),
+                (100.0, 0.0),
+                (1.0, 1.0),
+                (1.0, 1.0),
+                (120.0, -20.0),
+            ]
+            .into_iter()
+            .map(|(x, y)| StrokePoint {
+                x,
+                y,
+                time: 0.0,
+                pressure: 1.0,
+            })
+            .collect();
+            strokes[1].style.width = 50.0;
+            strokes[1].points[0].x = -100.0;
+        }
+        let bounds = object_bounds(&answer);
+        let mut page = Page::new();
+        page.objects.push(answer);
+        let mut renderer = PageRenderer::new();
+        renderer.update_objects(&page).unwrap();
+        let cached = &renderer.objects[&page.objects[0].id];
+        assert_eq!(cached.bounds, bounds);
+        for item in &cached.scene.items {
+            match item {
+                Primitive::Stroke(stroke) => {
+                    assert!(bounds.contains_rect(stroke.bounds));
+                    assert!(stroke.outline().iter().all(|p| bounds.contains(*p)));
+                    let mut mesh = egui::Mesh::default();
+                    stroke.mesh_full(egui::emath::TSTransform::IDENTITY, 0.0, &mut mesh);
+                    assert!(mesh.vertices.iter().all(|v| bounds.contains(v.pos)));
+                }
+                Primitive::Disk(center, radius, _) => assert!(
+                    bounds
+                        .contains_rect(Rect::from_center_size(*center, Vec2::splat(radius * 2.0)))
+                ),
+                _ => panic!("unexpected handwriting primitive"),
+            }
+        }
+        let Primitive::Stroke(first) = &cached.scene.items[0] else {
+            panic!("missing stroke")
+        };
+        let first = first.clone();
+        renderer.update_objects(&page).unwrap();
+        let Primitive::Stroke(reused) = &renderer.objects[&page.objects[0].id].scene.items[0]
+        else {
+            panic!("missing cached stroke")
+        };
+        assert!(std::sync::Arc::ptr_eq(&first, reused));
+    }
+}
+
+#[test]
+fn handwritten_exports_and_screen_match_strokes_ignore_semantics() {
+    for dashed in [false, true] {
+        let answer = object(handwritten_kind(dashed));
+        let mut generated = Page::new();
+        generated.objects.push(answer.clone());
+        let before = generated.clone();
+        let mut ordinary = Page::new();
+        if let ObjectKind::Handwritten {
+            position, strokes, ..
+        } = &answer.kind
+        {
+            for (index, stroke) in strokes.iter().enumerate() {
+                let mut points = stroke.points.clone();
+                for point in &mut points {
+                    point.x += position.x;
+                    point.y += position.y;
+                }
+                ordinary.objects.push(BoardObject {
+                    id: index.to_string(),
+                    kind: ObjectKind::Stroke {
+                        points,
+                        style: stroke.style,
+                    },
+                });
+            }
+        }
+        let png = export_png(&generated, 128, 128, false).unwrap();
+        let svg = export_svg(&generated, 128, 128, false).unwrap();
+        assert_eq!(png, export_png(&ordinary, 128, 128, false).unwrap());
+        let ordinary_svg = export_svg(&ordinary, 128, 128, false).unwrap();
+        let tokens: Vec<_> = svg.split_whitespace().collect();
+        let ordinary_tokens: Vec<_> = ordinary_svg.split_whitespace().collect();
+        assert_eq!(tokens.len(), ordinary_tokens.len());
+        for (a, b) in tokens.iter().zip(&ordinary_tokens) {
+            match (a.parse::<f32>(), b.parse::<f32>()) {
+                (Ok(a), Ok(b)) => assert!((a - b).abs() < 0.0001),
+                _ => assert_eq!(a, b),
+            }
+        }
+        assert!(!svg.contains("<text"));
+        assert!(!svg.contains("semantic"));
+        let ctx = egui::Context::default();
+        let screen = |page: &Page| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                paint_object_with_resources(ui.painter(), &page.objects[0], &NoResources);
+            });
+            output.textures_delta.clear();
+            output.shapes
+        };
+        let shapes = screen(&generated);
+        assert!(!shapes.is_empty());
+        assert_eq!(generated, before);
+        if let ObjectKind::Handwritten { text, layout, .. } = &mut generated.objects[0].kind {
+            *text = "changed original semantic text".into();
+            *layout = Some(MathLayout::Text("\u{0}not visual".into()));
+        }
+        assert_eq!(png, export_png(&generated, 128, 128, false).unwrap());
+        assert_eq!(svg, export_svg(&generated, 128, 128, false).unwrap());
+        assert_eq!(object_bounds(&answer), object_bounds(&generated.objects[0]));
+        assert_eq!(shapes, screen(&generated));
+        if let ObjectKind::Handwritten { position, .. } = &mut generated.objects[0].kind {
+            position.x += 8.0;
+        }
+        assert_ne!(png, export_png(&generated, 128, 128, false).unwrap());
+        assert_ne!(svg, export_svg(&generated, 128, 128, false).unwrap());
+    }
+}
+
+#[test]
+fn handwritten_render_rejects_invalid_data_and_counts_nested_budgets() {
+    let mut answer = object(handwritten_kind(false));
+    let page_before = page(answer.kind.clone());
+    let bytes = source_snapshot_bytes(&page_before);
+    if let ObjectKind::Handwritten {
+        text,
+        layout,
+        strokes,
+        ..
+    } = &mut answer.kind
+    {
+        text.push_str("1234");
+        *layout = None;
+        let point = strokes[0].points[0];
+        strokes[0].points.push(point);
+    }
+    let changed = page(answer.kind.clone());
+    // fraction() has three layout nodes and five text bytes.
+    assert_eq!(
+        source_snapshot_bytes(&changed),
+        bytes + 4 + std::mem::size_of::<StrokePoint>() - 3 * std::mem::size_of::<MathLayout>() - 5
+    );
+    if let ObjectKind::Handwritten { strokes, .. } = &mut answer.kind {
+        strokes[0].points.clear();
+    }
+    assert_eq!(object_bounds(&answer), Rect::NOTHING);
+    let invalid = page(answer.kind);
+    assert!(export_png(&invalid, 128, 128, false).is_err());
+    assert!(export_svg(&invalid, 128, 128, false).is_err());
+    let mut large = object(handwritten_kind(false));
+    if let ObjectKind::Handwritten { strokes, .. } = &mut large.kind {
+        strokes.truncate(1);
+        strokes[0]
+            .points
+            .resize(board_core::MAX_HANDWRITING_POINTS, StrokePoint::default());
+    }
+    let mut many = Page::new();
+    many.objects = vec![large; MAX_INPUT_POINTS / board_core::MAX_HANDWRITING_POINTS + 1];
+    assert!(matches!(
+        validate_page_budget(&many),
+        Err(RenderError::ResourceLimit(_))
+    ));
+}
+
 fn math_kind(layout: MathLayout) -> ObjectKind {
     ObjectKind::Math {
         position: p(20.0, 20.0),
@@ -3160,6 +3493,127 @@ fn stroke_chunks_reuse_idle_and_only_copy_one_chunk_on_edit() {
         assert!(std::sync::Arc::ptr_eq(&unchanged, current));
         assert!(edit.batch_copied_vertices < cold.batch_copied_vertices / 10);
         eprintln!("stroke chunks: 1500 -> {} submissions; cold buffers={} arcs={}; idle allocations=0; edit buffers={} arcs={}", cold.paint_arc_clones, cold.batch_buffer_allocations, cold.batch_arc_allocations, edit.batch_buffer_allocations, edit.batch_arc_allocations);
+    });
+    output.textures_delta.clear();
+}
+
+#[test]
+fn retained_mesh_budget_counts_capacity_and_falls_back_without_lost_geometry() {
+    let context = egui::Context::default();
+    let page = ink_benchmark_page();
+    let clip = Rect::from_min_size(Pos2::ZERO, egui::vec2(1200.0, 800.0));
+    let mut renderer = PageRenderer::new();
+    let mut object_bytes = 0;
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        let painter = ui
+            .ctx()
+            .layer_painter(egui::LayerId::background())
+            .with_clip_rect(clip);
+        renderer.update_objects(&page).unwrap();
+        renderer.prepare_meshes(&painter);
+        object_bytes = renderer.object_mesh_bytes;
+        assert!(object_bytes > 0);
+        renderer.prepare_chunks_with_budget(&painter, object_bytes);
+        assert_eq!(renderer.chunks.iter().map(|c| c.bytes).sum::<usize>(), 0);
+        renderer.chunks.clear();
+        renderer.prepare_chunks_with_budget(&painter, object_bytes * 2);
+        assert!(renderer.chunks.iter().map(|c| c.bytes).sum::<usize>() > 0);
+        assert!(
+            object_bytes + renderer.chunks.iter().map(|c| c.bytes).sum::<usize>()
+                <= object_bytes * 2
+        );
+    });
+    output.textures_delta.clear();
+    for budget in [0, object_bytes / 2, object_bytes, object_bytes * 2] {
+        let mut draw = |cached| {
+            let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                let painter = ui
+                    .ctx()
+                    .layer_painter(egui::LayerId::background())
+                    .with_clip_rect(clip);
+                if cached {
+                    renderer.clear();
+                    renderer.update_objects(&page).unwrap();
+                    renderer.prepare_meshes_with_budget(&painter, budget);
+                    renderer.prepare_chunks_with_budget(&painter, budget);
+                    let counted: usize = renderer
+                        .objects
+                        .values()
+                        .filter_map(|entry| entry.meshes.as_ref())
+                        .map(LineMeshes::buffer_bytes)
+                        .sum();
+                    assert_eq!(counted, renderer.object_mesh_bytes);
+                    assert!(
+                        counted + renderer.chunks.iter().map(|c| c.bytes).sum::<usize>() <= budget
+                    );
+                    renderer.mesh_key = Some(PageMeshKey::new(&painter));
+                    renderer.batches_dirty = false;
+                    renderer.paint_cached(&painter, &NoResources);
+                } else {
+                    paint_scene(&painter, &page_scene(&page).unwrap(), &NoResources);
+                }
+            });
+            output.textures_delta.clear();
+            format!(
+                "{:?}",
+                context.tessellate(output.shapes, output.pixels_per_point)
+            )
+        };
+        assert_eq!(draw(false), draw(true), "retention budget {budget}");
+    }
+    renderer.clear();
+    assert_eq!(renderer.object_mesh_bytes, 0);
+    assert!(renderer.chunks.is_empty());
+}
+
+#[test]
+fn mesh_budget_releases_stale_chunk_sources_on_edit_delete_and_clip_change() {
+    let context = egui::Context::default();
+    let mut page = ink_benchmark_page();
+    let mut renderer = PageRenderer::new();
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        let painter = ui
+            .painter()
+            .with_clip_rect(Rect::from_min_size(Pos2::ZERO, egui::vec2(1200.0, 800.0)));
+        renderer
+            .paint_page_at_document_revision(&painter, &page, ("doc", 0), false, &NoResources)
+            .unwrap();
+        let weak = std::sync::Arc::downgrade(
+            &renderer.objects[&page.objects[0].id]
+                .meshes
+                .as_ref()
+                .unwrap()
+                .batches[0]
+                .2,
+        );
+        if let ObjectKind::Stroke { style, .. } = &mut page.objects[0].kind {
+            style.width += 1.0;
+        }
+        renderer.update_objects(&page).unwrap();
+        assert!(
+            weak.upgrade().is_none(),
+            "stale source Arc must not hide in a chunk"
+        );
+        renderer
+            .paint_page_at_document_revision(&painter, &page, ("doc", 1), false, &NoResources)
+            .unwrap();
+        page.objects.remove(1);
+        renderer.update_objects(&page).unwrap();
+        assert!(renderer.chunks.is_empty());
+        let outside = painter.with_clip_rect(Rect::from_min_size(
+            egui::pos2(5000.0, 5000.0),
+            egui::vec2(100.0, 100.0),
+        ));
+        renderer
+            .paint_page_at_document_revision(&outside, &page, ("doc", 2), false, &NoResources)
+            .unwrap();
+        assert_eq!(renderer.object_mesh_bytes, 0);
+        assert!(
+            renderer
+                .objects
+                .values()
+                .all(|entry| entry.meshes.is_none())
+        );
     });
     output.textures_delta.clear();
 }

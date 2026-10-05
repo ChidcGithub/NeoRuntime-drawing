@@ -99,6 +99,221 @@ fn history_phase_microbench() {
 }
 // #endregion
 
+fn handwritten_object() -> BoardObject {
+    BoardObject {
+        id: "answer".into(),
+        kind: ObjectKind::Handwritten {
+            position: Point { x: 20.0, y: 30.0 },
+            text: "原始答案 1/2".into(),
+            layout: Some(MathLayout::Fraction(
+                Box::new(MathLayout::Text("1".into())),
+                Box::new(MathLayout::Text("2".into())),
+            )),
+            strokes: vec![
+                HandwritingStroke {
+                    points: vec![
+                        StrokePoint {
+                            x: -2.0,
+                            y: 3.0,
+                            time: 0.25,
+                            pressure: 0.3
+                        },
+                        StrokePoint {
+                            x: 12.0,
+                            y: 8.0,
+                            time: 0.75,
+                            pressure: 0.9
+                        },
+                    ],
+                    style: Style::default(),
+                };
+                2
+            ],
+        },
+    }
+}
+
+#[test]
+fn handwritten_roundtrip_versions_and_whole_answer_history() {
+    let mut document = Document::new();
+    let mut history = History::new(&document);
+    for layout_present in [true, false] {
+        let mut object = handwritten_object();
+        if !layout_present && let ObjectKind::Handwritten { layout, .. } = &mut object.kind {
+            *layout = None;
+        }
+        history_apply(
+            &mut history,
+            &mut document,
+            &[Operation::Add {
+                object: object.clone(),
+            }],
+        )
+        .unwrap();
+        let json = document.to_json().unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["version"], 3);
+        assert_eq!(
+            value["document"]["pages"][0]["objects"][0]["kind"]["type"],
+            "handwritten"
+        );
+        assert_eq!(Document::from_json(&json).unwrap(), document);
+        for version in [1, 2] {
+            value["version"] = serde_json::json!(version);
+            assert!(matches!(
+                Document::from_json(&value.to_string()),
+                Err(Error::InvalidDocument(_))
+            ));
+        }
+        let dir = TestDirectory::new();
+        let path = dir.0.join("answer.json");
+        document.save(&path).unwrap();
+        assert_eq!(Document::load(path).unwrap(), document);
+        history.undo(&mut document).unwrap();
+        assert!(document.current_page().objects.is_empty());
+        assert!(!history.can_undo());
+        assert_eq!(document.file_version(), 1);
+        history.redo(&mut document).unwrap();
+        assert_eq!(document.current_page().objects, vec![object]);
+        assert_eq!(document.file_version(), 3);
+        history.undo(&mut document).unwrap();
+    }
+    document.pages[0]
+        .objects
+        .push(math_object(MathLayout::Text("2".into())));
+    assert_eq!(document.file_version(), 2);
+    document.pages[0].objects.push(handwritten_object());
+    assert_eq!(document.file_version(), 3);
+}
+
+#[test]
+fn handwritten_limits_and_invalid_data_are_atomic() {
+    let mut boundary = handwritten_object();
+    if let ObjectKind::Handwritten { text, strokes, .. } = &mut boundary.kind {
+        *text = "中".repeat(MAX_HANDWRITING_TEXT_BYTES / 3) + "x";
+        strokes.resize(MAX_HANDWRITING_STROKES, strokes[0].clone());
+        for stroke in strokes {
+            stroke.points.resize(
+                MAX_HANDWRITING_POINTS / MAX_HANDWRITING_STROKES,
+                stroke.points[0],
+            );
+        }
+    }
+    boundary.validate().unwrap();
+    for case in 0..23 {
+        let mut object = boundary.clone();
+        let ObjectKind::Handwritten {
+            position,
+            text,
+            layout,
+            strokes,
+        } = &mut object.kind
+        else {
+            unreachable!()
+        };
+        match case {
+            0 => text.push('x'),
+            1 => strokes.push(strokes[0].clone()),
+            2 => {
+                let point = strokes[0].points[0];
+                strokes[0].points.push(point);
+            }
+            3 => strokes.clear(),
+            4 => strokes[0].points.clear(),
+            5 => position.x = f32::NAN,
+            6 => position.y = f32::INFINITY,
+            7 => position.x = MAX_HANDWRITING_COORD + 1.0,
+            8 => {
+                position.x = MAX_HANDWRITING_COORD;
+                strokes[0].points[0].x = 1.0;
+            }
+            9 => strokes[0].points[0].x = f32::INFINITY,
+            10 => strokes[0].points[0].y = -MAX_HANDWRITING_COORD - 1.0,
+            11 => strokes[0].points[0].time = f64::NAN,
+            12 => strokes[0].points[0].time = f64::INFINITY,
+            13 => strokes[0].points[0].time = -0.1,
+            14 => strokes[0].points[0].time = MAX_HANDWRITING_TIME + 1.0,
+            15 => strokes[0].points[0].pressure = f32::NAN,
+            16 => strokes[0].points[0].pressure = -0.1,
+            17 => strokes[0].points[0].pressure = 1.1,
+            18 => strokes[0].style.width = f32::NAN,
+            19 => strokes[0].style.width = 0.0,
+            20 => strokes[0].style.width = MAX_BRUSH_WIDTH + 1.0,
+            21 => *layout = Some(MathLayout::Text("x".repeat(MAX_MATH_TEXT_BYTES + 1))),
+            22 => {
+                *layout = Some(MathLayout::Row(vec![
+                    MathLayout::Text(String::new());
+                    MAX_MATH_NODES
+                ]))
+            }
+            _ => unreachable!(),
+        }
+        assert!(object.validate().is_err(), "case {case}");
+        let mut document = Document::new();
+        let before = document.clone();
+        assert!(apply(&mut document, &[add("valid"), Operation::Add { object }]).is_err());
+        assert_eq!(document, before);
+    }
+    let mut object = handwritten_object();
+    if let ObjectKind::Handwritten { layout, .. } = &mut object.kind {
+        let mut deep = MathLayout::Text("x".into());
+        for _ in 0..MAX_MATH_DEPTH {
+            deep = MathLayout::Radical(Box::new(deep));
+        }
+        *layout = Some(deep);
+    }
+    assert!(object.validate().is_err());
+}
+
+#[test]
+fn handwritten_nested_data_counts_towards_document_and_history_budgets() {
+    let mut document = Document::new();
+    let before = connections::document_bytes(&document);
+    let object = handwritten_object();
+    document.pages[0].objects.push(object.clone());
+    let bytes = connections::document_bytes(&document) - before;
+    let ObjectKind::Handwritten { text, strokes, .. } = &object.kind else {
+        unreachable!()
+    };
+    assert_eq!(
+        bytes,
+        std::mem::size_of::<BoardObject>()
+            + object.id.len()
+            + text.len()
+            + strokes.len() * std::mem::size_of::<HandwritingStroke>()
+            + 4 * std::mem::size_of::<StrokePoint>()
+            + 3 * std::mem::size_of::<MathLayout>()
+            + 2
+    );
+    let mut budget = connections::Budget::default();
+    budget.bytes(MAX_DOCUMENT_BYTES - bytes).unwrap();
+    budget.object(&object).unwrap();
+    assert!(budget.bytes(1).is_err());
+    let mut history = History::new(&document);
+    history_apply(&mut history, &mut document, &[add("next")]).unwrap();
+    assert_eq!(history.undo[0].1, before + bytes);
+    history.undo(&mut document).unwrap();
+    assert_eq!(
+        history.redo[0].1,
+        connections::document_bytes(&history.redo[0].0)
+    );
+
+    let mut large = handwritten_object();
+    if let ObjectKind::Handwritten { strokes, .. } = &mut large.kind {
+        strokes.truncate(1);
+        strokes[0]
+            .points
+            .resize(MAX_HANDWRITING_POINTS, StrokePoint::default());
+    }
+    let mut budget = connections::Budget::default();
+    for _ in 0..MAX_DOCUMENT_POINTS / MAX_HANDWRITING_POINTS {
+        budget.object(&large).unwrap();
+    }
+    assert!(
+        matches!(budget.object(&large), Err(Error::InvalidDocument(reason)) if reason.contains("点数"))
+    );
+}
+
 fn math_object(layout: MathLayout) -> BoardObject {
     BoardObject {
         id: "math".into(),

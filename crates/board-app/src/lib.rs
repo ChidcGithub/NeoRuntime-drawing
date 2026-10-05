@@ -2,6 +2,8 @@
 mod editing;
 mod features;
 mod gui;
+mod handwriting;
+mod handwriting_fallback;
 mod local_capture;
 mod render_diagnostics;
 
