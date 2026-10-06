@@ -6,6 +6,12 @@ This file records changes in English and Chinese. Unreleased describes work afte
 
 ### English
 
+#### Runtime-adapter compatibility preparation
+
+- Fix hosted `close` before `configure`: the pre-native-window startup adapter completes the accepted hide/close request without waiting for another stdin frame or EOF. Configured sessions still require real window acknowledgement; dirty-content guards and capture-stop barriers are unchanged.
+- Add 15 windowless startup regressions and 19 existing-protocol compatibility fixtures covering both applications, strict configuration, directional capabilities, cancellation/revocation, dirty close, EOF, resource chunks and lossless handwritten v3 persistence. JSON Lines remains v1; no Mod manifest, grant, generation field or new RPC is introduced. Official registration and process-generation fencing remain host-adapter responsibilities.
+- Verified the held-open-input regression failed before the fix. After this follow-up, `cargo test --workspace --locked --quiet`: **697 passed, 12 ignored**; formatting and diff checks passed. No native GUI/capture acceptance is claimed. This is a separate follow-up to `8c32db0`, not a change to the main Neo v0.1.0 tag or its locked runtime.
+
 #### Personal handwritten answers and fixes
 
 - Add experimental local personal-style answers, enabled by default independently of HWR (still off by default). Newly committed local pen strokes update bounded numeric style statistics; exact-glyph samples remain optional and manually labelled. Calculation/write-back still requires a click; host Agent answers are not personalized. No neural training, model download, or new RPC is introduced.
@@ -31,6 +37,12 @@ This file records changes in English and Chinese. Unreleased describes work afte
 - No release, tag, publication, or new license/provenance clearance is asserted here.
 
 ### 中文
+
+#### Runtime adapter 兼容准备
+
+- 修复 hosted 模式 configure 前 close：原生窗口尚未创建时，由启动适配器完成已接受的隐藏/关闭请求，不再等待下一帧 stdin 或 EOF。已配置会话仍须真实窗口确认，dirty 保护和截图停止屏障不变。
+- 新增15项无窗口启动回归与19项既有协议兼容测试，覆盖两种应用、严格配置、双向能力、取消/撤权、dirty close、EOF、资源分块及手写v3无损持久化。JSON Lines仍为v1；不新增Mod manifest、grant、generation字段或RPC。官方注册与进程代次隔离仍由主adapter负责。
+- 已验证 stdin 保持打开的回归在修复前失败。本轮修复后完整工作区测试 **697通过、12忽略**，格式与差异检查通过；不宣称原生GUI/截图验收完成。这是8c32db0之后的独立改动，不修改主Neo v0.1.0标签或其runtime锁定版本。
 
 #### 个人笔迹答案与修复
 

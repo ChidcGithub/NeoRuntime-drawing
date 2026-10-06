@@ -683,47 +683,16 @@ pub fn run(mode: AppMode, hosted: bool) -> Result {
     let mut session = Session::new(mode.kind());
     session.attach_window();
     if hosted {
-        emit(&session.ready())?;
         // eframe 首次呈现会自动显示根窗口，因此 configure 前根本不创建窗口。
-        let mut reader = std::io::stdin().lock();
-        while !session.configured && !session.closed {
-            match read_message(&mut reader) {
-                Ok(Some(Message::Request(request))) => {
-                    for message in session.handle(request) {
-                        emit(&message)?;
-                    }
-                }
-                Ok(Some(Message::Response(response))) => {
-                    for message in session.handle_response(response) {
-                        emit(&message)?;
-                    }
-                }
-                Ok(Some(Message::Event(event))) => {
-                    for message in session.handle_event(event) {
-                        emit(&message)?;
-                    }
-                }
-                Ok(None) => {
-                    session.host_disconnected();
-                    crate::recover_document(&mut session, &crate::recovery_directory())?;
-                    return Ok(());
-                }
-                Err(error) => {
-                    emit(&transport_event(&error))?;
-                    if matches!(error, board_protocol::TransportError::Io(_)) {
-                        return Err(error.into());
-                    }
-                }
-            }
-        }
-        if session.closed {
-            if let Some(request) = session.pending_window_request().cloned() {
-                // 尚未创建任何原生窗口，全部所属窗口确实不存在。
-                for message in session.acknowledge_window(&request.request_id, false) {
-                    emit(&message)?;
-                }
-            }
-            return Ok(());
+        match crate::hosted_startup::run(
+            &mut session,
+            &mut std::io::stdin().lock(),
+            &mut std::io::stdout().lock(),
+            &crate::recovery_directory(),
+        )? {
+            crate::hosted_startup::StartupOutcome::Configured => {}
+            crate::hosted_startup::StartupOutcome::Closed
+            | crate::hosted_startup::StartupOutcome::Disconnected => return Ok(()),
         }
     }
     let options = eframe::NativeOptions {

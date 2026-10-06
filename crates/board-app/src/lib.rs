@@ -4,6 +4,7 @@ mod features;
 mod gui;
 mod handwriting;
 mod handwriting_fallback;
+mod hosted_startup;
 mod local_capture;
 mod render_diagnostics;
 
