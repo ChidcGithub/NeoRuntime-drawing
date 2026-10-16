@@ -560,27 +560,86 @@ fn styled_line(
     Ok(())
 }
 fn stroke_widths(points: &[board_core::StrokePoint], style: &Style) -> Vec<f32> {
-    // 与 ink 的压感/速度公式一致，但不受其交互采样点数上限约束。
+    // 与 ink 的压感/速度公式一致（含 ±30ms 时间窗速度平滑与首点取本段速度），
+    // 但不受其交互采样点数上限约束。
+    let count = points.len();
+    let mut speeds = vec![0.0_f64; count.saturating_sub(1)];
+    let mut times = Vec::with_capacity(count);
     let mut time = points.first().map_or(0.0, |p| p.time);
-    let mut speed = 0.0;
+    times.push(time);
+    for i in 1..count {
+        let next_time = points[i].time.max(time);
+        times.push(next_time);
+        speeds[i - 1] = if next_time - time > 1e-6 {
+            (f64::from(points[i].x) - f64::from(points[i - 1].x))
+                .hypot(f64::from(points[i].y) - f64::from(points[i - 1].y))
+                / (next_time - time)
+        } else if i > 1 {
+            speeds[i - 2]
+        } else {
+            0.0
+        };
+        time = next_time;
+    }
+    smooth_speeds(&mut speeds, &times);
+    let weight = f64::from(0.7_f32);
     points
         .iter()
         .enumerate()
         .map(|(i, p)| {
-            let next_time = p.time.max(time);
-            let dt = next_time - time;
-            if i > 0 && dt > 1e-6 {
-                speed = (f64::from(p.x) - f64::from(points[i - 1].x))
-                    .hypot(f64::from(p.y) - f64::from(points[i - 1].y))
-                    / dt;
-            }
-            time = next_time;
+            let speed = if i == 0 {
+                speeds.first().copied().unwrap_or(0.0)
+            } else {
+                speeds[i - 1]
+            };
             let velocity = 0.25 + 0.75 / (1.0 + speed / 1200.0);
-            let weight = f64::from(0.7_f32);
             let pressure = 1.0 - weight + weight * (0.2 + 0.8 * f64::from(p.pressure));
             (f64::from(style.width) * velocity * pressure).max(0.01) as f32
         })
         .collect()
+}
+
+// 与 board_ink::smooth_speeds 逐位一致：±30ms 时间窗箱式平均应用两遍
+// （等效三角核，支撑 ±60ms），只削事件采样间隔的高频抖动；时间窗使不同采样
+// 密度得到同样的平滑尺度。滑动窗口配运行和：窗口两端随 j 单调前进，整体
+// 严格 O(n)，长时间戳平台不会退化成逐点重扫；两实现的相等性由测试守卫。
+fn smooth_speeds(speeds: &mut [f64], times: &[f64]) {
+    const WINDOW: f64 = 0.03;
+    let count = speeds.len();
+    if count < 2 {
+        return;
+    }
+    let mut mids = Vec::with_capacity(count);
+    for j in 0..count {
+        mids.push((times[j] + times[j + 1]) / 2.0);
+    }
+    let first = box_pass(speeds, &mids, WINDOW);
+    let second = box_pass(&first, &mids, WINDOW);
+    speeds.clone_from_slice(&second);
+}
+
+fn box_pass(speeds: &[f64], mids: &[f64], window: f64) -> Vec<f64> {
+    let count = speeds.len();
+    let mut smoothed = Vec::with_capacity(count);
+    let mut start = 0_usize;
+    let mut end = 0_usize;
+    let mut sum = speeds[0];
+    for j in 0..count {
+        while mids[j] - mids[start] > window {
+            sum -= speeds[start];
+            start += 1;
+        }
+        if end < start {
+            end = start;
+            sum = speeds[start];
+        }
+        while end + 1 < count && mids[end + 1] - mids[j] <= window {
+            end += 1;
+            sum += speeds[end];
+        }
+        smoothed.push(sum / (end - start + 1) as f64);
+    }
+    smoothed
 }
 
 // All backends and hit testing use the same font-independent layout metrics.

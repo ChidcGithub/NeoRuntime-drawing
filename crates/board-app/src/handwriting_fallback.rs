@@ -7,9 +7,10 @@ use board_core::{HandwritingStroke, StrokePoint, Style};
 const X_HEIGHT: f32 = 0.65;
 use std::sync::OnceLock;
 
-pub(crate) fn sample(
+pub(crate) fn sample_with_corner(
     ch: char,
     font: Option<&board_render::HandwritingFont>,
+    corner: f32,
 ) -> Result<Vec<HandwritingStroke>, String> {
     static TEMPLATES: OnceLock<Vec<board_hwr::InkTemplate>> = OnceLock::new();
     let templates =
@@ -112,9 +113,71 @@ pub(crate) fn sample(
             })
             .collect());
     }
-    font.ok_or_else(|| format!("没有字符「{ch}」的基础字形；本机字体不可用"))?
+    let strokes = font
+        .ok_or_else(|| format!("没有字符「{ch}」的基础字形；本机字体不可用"))?
         .sample(ch)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(smooth_font_strokes(strokes, corner))
+}
+
+/// Font skeletons are pixel-thinned polylines; smooth them so synthesized ink
+/// does not inherit axis-aligned jaggies. Templates and manual samples never
+/// pass through here. Strength follows the learned corner sharpness: writers
+/// with sharp strokes keep more of the skeleton's corners. Deterministic, and
+/// the 2048-point sample budget is never exceeded (oversized input is kept).
+fn smooth_font_strokes(strokes: Vec<HandwritingStroke>, corner: f32) -> Vec<HandwritingStroke> {
+    let corner = if corner.is_finite() {
+        corner.clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
+    let strength = 0.6 * (1.0 - corner) + 0.1;
+    let total_points = |strokes: &[HandwritingStroke]| {
+        strokes
+            .iter()
+            .map(|stroke| stroke.points.len())
+            .sum::<usize>()
+    };
+    if total_points(&strokes) > crate::handwriting::MAX_SAMPLE_POINTS {
+        return strokes;
+    }
+    let mut candidate: Vec<HandwritingStroke> = strokes
+        .iter()
+        .map(|stroke| {
+            let mut stroke = stroke.clone();
+            let length: f32 = stroke
+                .points
+                .windows(2)
+                .map(|pair| (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y))
+                .sum();
+            if stroke.points.len() >= 3 && length >= 16.0 {
+                let spacing = (length / 1600.0).clamp(2.5, 6.0);
+                if let Ok(points) =
+                    board_ink::smooth_resample(&stroke.points, spacing, strength, 75.0)
+                {
+                    stroke.points = points;
+                }
+            }
+            stroke
+        })
+        .collect();
+    if total_points(&candidate) > crate::handwriting::MAX_SAMPLE_POINTS {
+        return strokes;
+    }
+    // Deterministic re-timing: cumulative distance at a fixed 600 units/second
+    // pace; style application later re-times with the learned speed profile.
+    for stroke in &mut candidate {
+        let mut time = 0.0;
+        let mut previous: Option<(f32, f32)> = None;
+        for point in &mut stroke.points {
+            if let Some((px, py)) = previous {
+                time += f64::from((point.x - px).hypot(point.y - py)) / 600.0;
+            }
+            point.time = time;
+            previous = Some((point.x, point.y));
+        }
+    }
+    candidate
 }
 
 #[cfg(test)]
@@ -140,7 +203,7 @@ mod tests {
                     color: board_core::Color::default(),
                 };
                 let board_core::ObjectKind::Handwritten { strokes, .. } = profile
-                    .render_adaptive(&kind, &text, |ch| sample(ch, None))
+                    .render_adaptive(&kind, &text, |ch| sample_with_corner(ch, None, 0.5))
                     .unwrap()
                 else {
                     panic!("Expected ink")
@@ -157,7 +220,7 @@ mod tests {
             assert!(render('x')[0].points.len() > render('×')[0].points.len());
             assert_eq!(render('*'), render('×'));
         }
-        let o = bounds(&sample('o', None).unwrap());
+        let o = bounds(&sample_with_corner('o', None, 0.5).unwrap());
         assert_eq!(o.max.y, 96.0);
         assert!(o.min.y > 24.0);
         // Recognition retains its deliberately ambiguous cross templates.
@@ -173,12 +236,62 @@ mod tests {
     fn mathematical_fallback_is_bounded_deterministic_and_keeps_punctuation_position() {
         let mut profile = crate::handwriting::Profile::default();
         for ch in "0123456789+-−*/×÷=xy().,;:[]±≈π^".chars() {
-            let ink = sample(ch, None).unwrap();
-            assert_eq!(ink, sample(ch, None).unwrap());
+            let ink = sample_with_corner(ch, None, 0.5).unwrap();
+            assert_eq!(ink, sample_with_corner(ch, None, 0.5).unwrap());
             profile.add_sample(ch, ink).unwrap();
         }
-        assert!(sample('.', None).unwrap()[0].points[0].y > 90.0);
-        assert_eq!(sample('-', None).unwrap()[0].points[0].y, 60.0);
-        assert!(sample('漢', None).is_err());
+        assert!(sample_with_corner('.', None, 0.5).unwrap()[0].points[0].y > 90.0);
+        assert_eq!(
+            sample_with_corner('-', None, 0.5).unwrap()[0].points[0].y,
+            60.0
+        );
+        assert!(sample_with_corner('漢', None, 0.5).is_err());
+    }
+
+    #[test]
+    fn font_skeleton_smoothing_is_bounded_deterministic_and_corner_aware() {
+        let jag = HandwritingStroke {
+            // Shallow ~67° zigzag: pixel-jitter-like wobble that smoothing
+            // should damp, unlike sharp ≥75° corners that must survive.
+            points: (0..48)
+                .map(|i| StrokePoint {
+                    x: 20.0 + i as f32 * 3.0,
+                    y: if i % 2 == 0 { 63.0 } else { 65.0 },
+                    time: i as f64 * 0.01,
+                    pressure: 1.0,
+                })
+                .collect(),
+            style: Style::default(),
+        };
+        // smooth_resample is a single damped pass whose anti-jitter loop skips
+        // the second and second-to-last samples, so compare mean wobble
+        // amplitude rather than the max (which stays at those two samples).
+        let wobble = |stroke: &HandwritingStroke| {
+            let sum: f32 = stroke
+                .points
+                .iter()
+                .map(|point| (point.y - 64.0).abs())
+                .sum();
+            sum / stroke.points.len() as f32
+        };
+        let soft = smooth_font_strokes(vec![jag.clone()], 0.0);
+        let soft_again = smooth_font_strokes(vec![jag.clone()], 0.0);
+        let sharp = smooth_font_strokes(vec![jag.clone()], 1.0);
+        assert_eq!(soft, soft_again, "deterministic");
+        assert_ne!(soft[0].points, jag.points, "jagged skeletons are smoothed");
+        assert!(
+            wobble(&soft[0]) < wobble(&jag) - 0.1,
+            "round writers smooth away zigzag wobble"
+        );
+        assert!(wobble(&sharp[0]) > wobble(&soft[0]) + 0.1);
+        assert!(soft[0].points.len() <= crate::handwriting::MAX_SAMPLE_POINTS);
+        // Oversized input (beyond the 2048-point sample budget) is kept
+        // verbatim instead of being smoothed or re-timed.
+        let mut huge = jag.clone();
+        let last = *huge.points.last().unwrap();
+        huge.points
+            .resize(crate::handwriting::MAX_SAMPLE_POINTS + 1, last);
+        let kept = smooth_font_strokes(vec![huge.clone()], 0.0);
+        assert_eq!(kept[0].points, huge.points);
     }
 }

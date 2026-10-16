@@ -6,6 +6,14 @@ use super::*;
 const WINDOW: usize = 31;
 const RESAMPLE_POINTS: usize = 33;
 
+fn default_speed_peak() -> f32 {
+    1.35
+}
+
+fn default_corner() -> f32 {
+    0.5
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Observation {
@@ -13,6 +21,10 @@ struct Observation {
     slant: Option<f32>,
     aspect: Option<f32>,
     speed: Option<f32>,
+    #[serde(default)]
+    speed_peak: Option<f32>,
+    #[serde(default)]
+    corner: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -23,6 +35,12 @@ pub(super) struct LearnedStyle {
     slant: f32,
     aspect: f32,
     speed: f32,
+    // Shape how synthesized ink moves: peak-to-mean speed ratio and corner
+    // sharpness. Scalar statistics only, never unlabelled ink or positions.
+    #[serde(default = "default_speed_peak")]
+    speed_peak: f32,
+    #[serde(default = "default_corner")]
+    corner: f32,
     // Only scalar measurements survive a call; never unlabelled ink or positions.
     recent: Vec<Observation>,
 }
@@ -35,6 +53,8 @@ impl Default for LearnedStyle {
             slant: -0.08,
             aspect: 0.7,
             speed: 240.0,
+            speed_peak: default_speed_peak(),
+            corner: default_corner(),
             recent: Vec::new(),
         }
     }
@@ -49,9 +69,19 @@ impl LearnedStyle {
         self.learned_strokes
     }
 
+    /// Learned peak-to-mean speed ratio shaping synthetic stroke motion.
+    pub(super) fn motion_peak(&self) -> f32 {
+        self.speed_peak
+    }
+
+    /// Learned corner sharpness (0..1) shaping font-skeleton smoothing.
+    pub(super) fn corner(&self) -> f32 {
+        self.corner
+    }
+
     pub(super) fn summary(&self) -> String {
         format!(
-            "{}; strokes={}; window={}/{}; width@72={:.2}; slant(dx/dy)={:.3}; aspect={:.2}; speed@72={:.1}/s (stroke-bbox heuristic, not character segmentation)",
+            "{}; strokes={}; window={}/{}; width@72={:.2}; slant(dx/dy)={:.3}; aspect={:.2}; speed@72={:.1}/s; peak×{:.2}; corner={:.2} (stroke-bbox heuristic, not character segmentation)",
             if self.learned_strokes == 0 {
                 "Default style (not learned)"
             } else {
@@ -64,6 +94,8 @@ impl LearnedStyle {
             self.slant,
             self.aspect,
             self.speed,
+            self.speed_peak,
+            self.corner,
         )
     }
 
@@ -74,11 +106,15 @@ impl LearnedStyle {
                 && o.slant.is_none_or(|v| in_range(v, -0.6, 0.6))
                 && o.aspect.is_none_or(|v| in_range(v, 0.35, 1.4))
                 && o.speed.is_none_or(|v| in_range(v, 60.0, 900.0))
+                && o.speed_peak.is_none_or(|v| in_range(v, 1.0, 2.2))
+                && o.corner.is_none_or(|v| in_range(v, 0.0, 1.0))
         };
         if !in_range(self.pen_width, 0.5, 12.0)
             || !in_range(self.slant, -0.6, 0.6)
             || !in_range(self.aspect, 0.35, 1.4)
             || !in_range(self.speed, 60.0, 900.0)
+            || !in_range(self.speed_peak, 1.0, 2.2)
+            || !in_range(self.corner, 0.0, 1.0)
             || self.recent.len() != self.learned_strokes.min(WINDOW as u32) as usize
             || !self.recent.iter().all(valid_observation)
             || (self.learned_strokes == 0 && !self.is_default())
@@ -122,6 +158,16 @@ impl LearnedStyle {
             self.recent.iter().filter_map(|o| o.speed),
             40.0,
         );
+        update(
+            &mut self.speed_peak,
+            self.recent.iter().filter_map(|o| o.speed_peak),
+            0.15,
+        );
+        update(
+            &mut self.corner,
+            self.recent.iter().filter_map(|o| o.corner),
+            0.08,
+        );
         true
     }
 
@@ -152,16 +198,12 @@ impl LearnedStyle {
         for stroke in sample {
             stroke.style.width = self.pen_width;
             stroke.style.dashed = false;
-            let mut time = 0.0;
-            let mut previous: Option<(f32, f32)> = None;
             for point in &mut stroke.points {
                 point.x = point.x * fit + shift;
-                if let Some((x, y)) = previous {
-                    time += f64::from((point.x - x).hypot(point.y - y)) / f64::from(self.speed);
-                }
-                point.time = time;
-                previous = Some((point.x, point.y));
             }
+            // Total duration stays path_length / speed; the learned speed peak
+            // only redistributes motion inside the stroke (ease-in/ease-out).
+            super::eased_retime(&mut stroke.points, self.speed, self.speed_peak);
         }
     }
 }
@@ -269,6 +311,54 @@ fn measure(points: &[StrokePoint], style: Style) -> Option<Observation> {
             .collect(),
     );
     let aspect = width / height;
+    // Speed profile: middle arc third versus the whole-stroke mean speed. The
+    // ratio is scale-free; 1.0 is uniform motion, higher values mean a faster
+    // middle (an ease shape). Corner sharpness: median absolute turn between
+    // consecutive resampled segments, normalized so 45 degrees saturates.
+    let speed_peak = if duration >= 0.02 && length > 0.0 {
+        let arc_time = |target: f32| -> Option<f64> {
+            let mut traversed = 0.0;
+            for pair in points.windows(2) {
+                let step = (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
+                if traversed + step >= target {
+                    let t = if step > 0.0 {
+                        (target - traversed) / step
+                    } else {
+                        0.0
+                    };
+                    return Some(pair[0].time + (pair[1].time - pair[0].time) * f64::from(t));
+                }
+                traversed += step;
+            }
+            Some(points[points.len() - 1].time)
+        };
+        let third = length / 3.0;
+        let middle = arc_time(2.0 * third)? - arc_time(third)?;
+        if middle > 1e-9 {
+            let ratio = (f64::from(third) / middle) / (f64::from(length) / duration);
+            Some((ratio as f32).clamp(1.0, 2.2))
+        } else {
+            Some(2.2)
+        }
+    } else {
+        None
+    };
+    let corner = {
+        let mut turns = Vec::new();
+        for triple in resampled.windows(3) {
+            let (ax, ay) = (triple[1].x - triple[0].x, triple[1].y - triple[0].y);
+            let (bx, by) = (triple[2].x - triple[1].x, triple[2].y - triple[1].y);
+            if ax.hypot(ay) > 1e-6 && bx.hypot(by) > 1e-6 {
+                turns.push((ax * by - ay * bx).atan2(ax * bx + ay * by).abs());
+            }
+        }
+        median(
+            turns
+                .iter()
+                .map(|angle| (angle.to_degrees() / 45.0).clamp(0.0, 1.0))
+                .collect(),
+        )
+    };
     Some(Observation {
         width: (style.width * CAP_HEIGHT / height).clamp(0.5, 12.0),
         slant,
@@ -279,5 +369,7 @@ fn measure(points: &[StrokePoint], style: Style) -> Option<Observation> {
         speed: (duration >= 0.02).then(|| {
             (f64::from(length * CAP_HEIGHT / height) / duration).clamp(60.0, 900.0) as f32
         }),
+        speed_peak,
+        corner,
     })
 }

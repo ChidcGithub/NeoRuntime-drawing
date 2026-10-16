@@ -13,7 +13,7 @@ cargo build --release -p neo-drawing --locked
 
 - No arguments or `--help` shows help without opening a window; `--version` shows the version. Help and version output use stderr.
 - `--headless` provides windowless JSON Lines communication. `--gui --hosted` waits for host configuration before creating a native window; it does not provide host services itself.
-- Windows Drawing defaults to **Glow/OpenGL**; other platforms default to **wgpu**. Override with `NEO_DRAW_RENDERER=glow` or `wgpu`, or remove the variable to restore defaults. There is no automatic fallback.
+- Windows Drawing defaults to **Glow/OpenGL**; other platforms default to **wgpu**. Override with `NEO_DRAW_RENDERER=glow` or `wgpu`, or remove the variable to restore defaults. When wgpu is selected, its backends (Vulkan → DX12 → GL) are probed in a child process at startup; candidates that crash, error, or hang are skipped and the app falls back to Glow when all fail.
 
 ## Writing and tools
 

@@ -30,12 +30,12 @@ use std::path::Path;
 mod handwriting_style;
 use handwriting_style::LearnedStyle;
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
 const MAX_GLYPHS: usize = 96;
 const MAX_VARIANTS: usize = 3;
 const MAX_SAMPLE_STROKES: usize = 16;
-const MAX_SAMPLE_POINTS: usize = 2048;
+pub(crate) const MAX_SAMPLE_POINTS: usize = 2048;
 const MAX_PROFILE_POINTS: usize = 65536;
 const MAX_INPUT_CHARS: usize = 4096;
 const CAP_HEIGHT: f32 = 72.0;
@@ -128,6 +128,12 @@ impl Profile {
         self.style.summary()
     }
 
+    /// Learned corner sharpness (0..1) for the font-skeleton fallback smoothing;
+    /// 0.5 is the unlearned default. Scalar only, never stored ink.
+    pub fn style_corner(&self) -> f32 {
+        self.style.corner()
+    }
+
     pub fn clear(&mut self) {
         self.glyphs.clear();
         self.style = LearnedStyle::default();
@@ -167,6 +173,9 @@ impl Profile {
     /// Returns a fully validated replacement; never mutates the current profile.
     /// Direct serde deserialization is not an import API; render/add/save also
     /// validate so it cannot bypass the profile's invariants.
+    /// Version 1 and 2 files still load; the motion dimensions (speed peak,
+    /// corner sharpness) then take their unlearned defaults. Version 1 still
+    /// cannot carry learned style.
     /// Unknown fields are rejected in the envelope, profile, glyph and learned
     /// statistics. Nested core strokes/points/styles/colors keep their existing
     /// serde compatibility policy (unknown fields ignored, not preserved on save).
@@ -175,7 +184,7 @@ impl Profile {
             return Err("Profile JSON exceeds 8 MiB".into());
         }
         let mut file: ProfileFile<Self> = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        if file.version != 1 && file.version != VERSION {
+        if file.version != 1 && file.version != 2 && file.version != VERSION {
             return Err(format!(
                 "Unsupported handwriting profile version: {}",
                 file.version
@@ -294,6 +303,7 @@ impl Profile {
             strokes: 0,
             points: 0,
             pen_width: self.median_width(),
+            motion_peak: self.style.motion_peak(),
         };
         let plan = if let Some(layout) = layout {
             planner.layout(layout, size)?
@@ -521,6 +531,102 @@ impl Profile {
     }
 }
 
+// Ease-in/ease-out trapezoid for synthesized strokes: ends start at 30% of the
+// peak speed, ramps span at most 45% of the stroke, the middle cruises.
+const EASE_START_SPEED: f32 = 0.3;
+
+/// Re-times one pen-down stroke with a bounded ease-in/ease-out profile.
+/// Total duration stays `path_length / mean_speed`, so the learned speed keeps
+/// setting the pace; `peak_ratio` only redistributes speed inside the stroke
+/// (1.0 keeps uniform motion). Geometry, pressure and point order are untouched;
+/// time stays monotonically non-decreasing and deterministic.
+fn eased_retime(points: &mut [StrokePoint], mean_speed: f32, peak_ratio: f32) {
+    if points.len() < 2 || !mean_speed.is_finite() || mean_speed <= 0.0 {
+        return;
+    }
+    let peak = if peak_ratio.is_finite() && peak_ratio >= 1.0 {
+        peak_ratio.min(2.2)
+    } else {
+        1.0
+    };
+    let ramp = ((1.0 - 1.0 / peak) / (1.0 - EASE_START_SPEED)).clamp(0.0, 0.45);
+    let mut length = 0.0;
+    for pair in points.windows(2) {
+        length += (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
+    }
+    if !length.is_finite() || length <= 0.0 {
+        return;
+    }
+    // Raw times use a unit peak speed; one final scale makes the total
+    // duration exactly path_length / mean_speed.
+    let mut raw_total = 0.0;
+    let mut traversed = 0.0;
+    let mut previous: Option<(f32, f32)> = None;
+    for point in points.iter_mut() {
+        let (x, y) = (point.x, point.y);
+        if let Some((px, py)) = previous {
+            let segment = (x - px).hypot(y - py);
+            if segment > 0.0 {
+                let u0 = traversed / length;
+                traversed += segment;
+                let u1 = (traversed / length).min(1.0);
+                raw_total += f64::from(segment / profile_segment_mean(u0, u1, ramp));
+            }
+            point.time = raw_total;
+        } else {
+            point.time = 0.0;
+        }
+        previous = Some((x, y));
+    }
+    if raw_total > 0.0 {
+        let scale = f64::from(length) / f64::from(mean_speed) / raw_total;
+        for point in points.iter_mut() {
+            point.time *= scale;
+        }
+    }
+}
+
+/// Speed at normalized arc length `u` as a fraction of the peak.
+fn profile_w(u: f32, ramp: f32) -> f32 {
+    if ramp <= 0.0 {
+        return 1.0;
+    }
+    if u <= 0.0 || u >= 1.0 {
+        return EASE_START_SPEED;
+    }
+    if u < ramp {
+        return EASE_START_SPEED + (1.0 - EASE_START_SPEED) * (u / ramp);
+    }
+    if u > 1.0 - ramp {
+        return EASE_START_SPEED + (1.0 - EASE_START_SPEED) * ((1.0 - u) / ramp);
+    }
+    1.0
+}
+
+/// Exact mean of the piecewise-linear profile over `[u0, u1]`, split at the
+/// ramp knots so each piece integrates as a trapezoid.
+fn profile_segment_mean(u0: f32, u1: f32, ramp: f32) -> f32 {
+    if !(u1 > u0) {
+        return profile_w(u0, ramp);
+    }
+    let mut knots = [u0, u1, u0, u0];
+    let mut count = 2;
+    for knot in [ramp, 1.0 - ramp] {
+        if u0 < knot && knot < u1 {
+            knots[count] = knot;
+            count += 1;
+        }
+    }
+    let knots = &mut knots[..count];
+    knots.sort_by(|a, b| a.total_cmp(b));
+    let mut integral = 0.0;
+    for pair in knots.windows(2) {
+        integral +=
+            (profile_w(pair[0], ramp) + profile_w(pair[1], ramp)) * 0.5 * (pair[1] - pair[0]);
+    }
+    integral / (u1 - u0)
+}
+
 fn validate_label(label: char) -> Result<(), String> {
     if label.is_whitespace() || label.is_control() {
         Err("Sample label must be one non-whitespace, non-control character".into())
@@ -660,6 +766,7 @@ struct InkBox<'a> {
     children: Vec<(Point, InkBox<'a>)>,
     structure: Vec<Point>,
     pen_width: f32,
+    motion_peak: f32,
 }
 
 struct Planner<'a> {
@@ -668,6 +775,7 @@ struct Planner<'a> {
     strokes: usize,
     points: usize,
     pen_width: f32,
+    motion_peak: f32,
 }
 
 impl<'a> Planner<'a> {
@@ -682,6 +790,7 @@ impl<'a> Planner<'a> {
             children: Vec::new(),
             structure: Vec::new(),
             pen_width: self.pen_width,
+            motion_peak: self.motion_peak,
         }
     }
 
@@ -920,22 +1029,19 @@ impl InkBox<'_> {
         if !self.structure.is_empty() {
             output.begin(self.structure.len())?;
             let mut points: Vec<StrokePoint> = Vec::with_capacity(self.structure.len());
-            let mut time = 0.0;
             for p in &self.structure {
-                let mut point = StrokePoint {
+                let point = StrokePoint {
                     x: p.x + offset.x,
                     y: p.y + offset.y,
                     pressure: 1.0,
-                    time,
+                    time: 0.0,
                 };
-                if let Some(previous) = points.last() {
-                    time += f64::from(point.x - previous.x).hypot(f64::from(point.y - previous.y))
-                        / 600.0;
-                    point.time = time;
-                }
                 output.check_point(&point)?;
                 points.push(point);
             }
+            // Structural bars share the eased motion of synthesized glyphs; the
+            // mean pace stays distance/600 and the learned peak shapes it.
+            eased_retime(&mut points, 600.0, self.motion_peak);
             output.strokes.push(HandwritingStroke {
                 points,
                 style: Style {

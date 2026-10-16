@@ -49,10 +49,18 @@ fn real_ink_waits_for_pointer_click_and_undo_is_one_item() {
         panic!()
     };
     assert_eq!(features::layout_text(layout), "= 2");
-    assert_eq!(
-        *position,
-        features::result_position(features::ink_bounds(&strokes), false)
+    let source = features::ink_bounds(&strokes);
+    assert!(position.x > source.right());
+    let placed = board_render::object_bounds(
+        &app.session
+            .document
+            .current_page()
+            .objects
+            .last()
+            .unwrap()
+            .clone(),
     );
+    assert!((placed.center().y - source.center().y).abs() <= 1.0);
     assert!(app.calculation.is_none());
     app.poll_ink(&ctx, now + Duration::from_secs(5), |_| panic!("duplicate"));
     drain_workers(&mut app);
@@ -430,7 +438,7 @@ fn exact_ink_layout_is_one_object_after_icon_or_panel_click() {
 fn math_selection_move_erase_and_stale_preview_preserve_single_object() {
     let mut app = app();
     let output = features::calculation_display("1/2+1/3", app.math_bounds, true).unwrap();
-    app.add(output.into_kind(Point { x: 300.0, y: 200.0 }, Color::default()));
+    app.add(output.into_kind(Point { x: 300.0, y: 200.0 }, Color::default(), 26.0));
     let original = app.session.document.current_page().objects[0].clone();
     let center = board_render::object_bounds(&original).center();
     assert!(editing::hit_test(&original, center, 0.0));

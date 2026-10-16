@@ -21,7 +21,6 @@ pub(super) enum Icon {
     Exit,
     Calculator,
     Plot,
-    Correct,
 }
 
 pub(super) fn button(
@@ -203,19 +202,6 @@ fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 (17., 14.),
                 (20., 5.),
                 (22., 3.),
-            ]);
-        }
-        Icon::Correct => {
-            box_at(2., 2., 13., 19.);
-            line(&[(5., 6.), (11., 6.)]);
-            line(&[(5., 10.), (9., 10.)]);
-            line(&[
-                (10., 21.),
-                (12., 15.),
-                (20., 7.),
-                (23., 10.),
-                (15., 18.),
-                (10., 21.),
             ]);
         }
     }

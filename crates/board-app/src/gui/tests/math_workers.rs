@@ -58,9 +58,11 @@ fn clicked_equation_newline_and_duplicate_worker_are_one_shot() {
     click_ink_icon(&mut app, &ctx);
     drain_workers(&mut app);
     assert_eq!(app.session.document.current_page().objects.len(), count + 1);
+    let gap = (bounds.height() * 0.4).clamp(14.0, 48.0);
     assert!(
         matches!(&app.session.document.current_page().objects.last().unwrap().kind,
-        ObjectKind::Text { text, position, .. } if text == "x = -4" && *position == features::result_position(bounds, true))
+        ObjectKind::Text { text, position, .. } if text == "x = -4"
+            && position.x == bounds.left() && position.y == bounds.bottom() + gap)
     );
     app.hwr_worker.start(ctx.clone(), move || {
         (request, Ok(candidate("2x+3=x-1", 0.99)).into())

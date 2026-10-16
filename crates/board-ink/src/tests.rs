@@ -590,6 +590,63 @@ fn faster_and_lighter_strokes_are_thinner() {
 }
 
 #[test]
+fn stroke_widths_smooth_sampling_jitter_into_narrow_steps() {
+    let style = Style {
+        width: 40.0,
+        ..Style::default()
+    };
+    // 匀速 600px/s，但事件间隔 4ms/16ms 交替：未平滑时相邻点宽度相差约
+    // 9.5px（40 号笔下肉眼可见锯齿），箱式平均后收敛到 2px 以内。
+    let mut points = Vec::new();
+    let mut time = 0.0_f64;
+    for i in 0..60 {
+        points.push(StrokePoint {
+            x: i as f32 * 6.0,
+            y: 0.0,
+            time,
+            pressure: 1.0,
+        });
+        time += if i % 2 == 0 { 0.004 } else { 0.016 };
+    }
+    let widths = stroke_widths(&points, &style, 1200.0, 0.7).unwrap();
+    assert_eq!(widths.len(), points.len());
+    for pair in widths.windows(2) {
+        assert!(
+            (pair[1] - pair[0]).abs() < 2.0,
+            "adjacent widths differ by {}",
+            (pair[1] - pair[0]).abs()
+        );
+    }
+}
+
+#[test]
+fn stroke_widths_fragment_start_keeps_local_speed() {
+    let style = Style {
+        width: 40.0,
+        ..Style::default()
+    };
+    // 长笔画中段切出的碎片：首点不再重置为最粗，宽度由本段速度决定。
+    // 60px / 0.05s = 1200px/s，scale 1200 → velocity 0.625 → 宽 25。
+    let fragment = [
+        StrokePoint {
+            x: 100.0,
+            y: 0.0,
+            time: 1.0,
+            pressure: 1.0,
+        },
+        StrokePoint {
+            x: 160.0,
+            y: 0.0,
+            time: 1.05,
+            pressure: 1.0,
+        },
+    ];
+    let widths = stroke_widths(&fragment, &style, 1200.0, 0.7).unwrap();
+    assert!((widths[0] - widths[1]).abs() < 1e-4);
+    assert!((widths[1] - 25.0).abs() < 0.5);
+}
+
+#[test]
 fn distance_handles_lines_segments_and_degenerate_points() {
     close(
         point_line_distance(p(20.0, 3.0), p(0.0, 0.0), p(10.0, 0.0)).unwrap(),

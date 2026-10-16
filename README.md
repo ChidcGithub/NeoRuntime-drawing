@@ -2,7 +2,7 @@
 
 Rust desktop tools for classroom writing and screen annotation, with standalone interfaces and a JSON Lines integration layer for a Neo host.
 
-**v0.0.1 is an initial, source-only prerelease**, not a production-ready binary distribution. The release uses GitHub's automatically generated source archives; no executables, model weights, dependency bundles, or runtime packages are attached. Native Windows and real-host acceptance testing are not complete. See the [release notes](CHANGELOG.md) for scope and known limitations.
+**v0.0.2 is a source-only prerelease**, not a production-ready binary distribution. The release uses GitHub's automatically generated source archives; no executables, model weights, dependency bundles, or runtime packages are attached. Native Windows and real-host acceptance testing are not complete. See the [release notes](CHANGELOG.md) for scope and known limitations.
 
 ## Overview
 
@@ -60,7 +60,7 @@ $env:NEO_DRAW_RENDERER = "wgpu" # Or "glow"
 Remove-Item Env:NEO_DRAW_RENDERER -ErrorAction SilentlyContinue
 ```
 
-Launch the chosen application after setting an override, before removing it. There is no automatic renderer fallback; graphics-driver and native transparency behavior still require validation on the target machine.
+Launch the chosen application after setting an override, before removing it. When the selected renderer is wgpu, its backends (Vulkan → DX12 → GL) are probed in a child process at startup (the app re-invokes itself with a hidden `--render-probe` flag; instance, adapter, and device initialization with an 8s budget each). A backend that crashes, errors, or hangs fails its probe, and when all fail the app falls back to Glow. Because probing runs out of process, even drivers that hard-crash (access violations) only take down the probe. Native transparency behavior still requires validation on the target machine. A forced `NEO_DRAW_DEBUG_BACKEND` skips probing.
 
 ## Everyday use
 
@@ -106,7 +106,7 @@ In Blackboard's mathematics panel, expand **个人笔迹答案（实验性）**.
 - While enabled, fresh, successfully committed local **`Tool::Pen` strokes** can update numeric style statistics without labels, confirmation, or prior manual samples. A bounded window of **31 numeric observations**, rolling medians, and capped exponentially weighted moving averages (EWMA) estimate pen width, slant, aspect, and speed. Only numeric statistics are retained by automatic learning, not unlabeled stroke examples. The writing-like-stroke filter is heuristic: it cannot reliably distinguish every diagram stroke from handwriting. This is not character recognition or automatic character segmentation, and does not learn an exact alphabet or clone unseen Chinese characters.
 - Imports, old documents, host operations, undo/redo, and generated answers do not feed automatic learning. Generated glyphs/output are not stored as profile examples. This feature adds no neural models, model training/downloads, cloud service, or network access.
 - Optional exact-glyph sampling is nested under **可选：精确字形采样**. Only this optional workflow requires a manually entered single non-whitespace, non-control character label; draw the sample and click **加入精确字形**, with no label-confirmation checkbox. The canvas uses **128×128 local coordinates**, displayed at **256×256**, with a top guide at **y=24** and baseline at **y=96**. GUI samples use constant pressure **1**, not native stylus pressure. Limits remain **96 characters**, **3 variants per character**, **65,536 total sample points**, and **16 strokes / 2,048 points per sample**.
-- Style statistics and optional samples stay in memory unless explicitly saved/loaded through a local JSON path (maximum **8 MiB**). Profile format **2** also reads format **1**; this is separate from document versions. Saving requires overwrite permission and loading requires confirmation to replace the in-memory profile; destructive-action confirmations remain. There is no automatic persistence, load, or profile-directory scan.
+- Style statistics and optional samples stay in memory unless explicitly saved/loaded through a local JSON path (maximum **8 MiB**). Profile format **3** also reads formats **1** and **2** (older files load with the motion dimensions at their defaults); this is separate from document versions. Saving requires overwrite permission and loading requires confirmation to replace the in-memory profile; destructive-action confirmations remain. There is no automatic persistence, load, or profile-directory scan.
 - Preview generation and profile JSON I/O share one background slot, without a queue. Relevant context changes invalidate preview/load results; a valid preview reuses cached render meshes on idle frames without changing the document or learning statistics. **An authorized save writes the click-time profile snapshot in the background; closing the panel or editing the profile does not cancel an in-progress write.** Later edits are not included or automatically persisted.
 - Keyboard edits, Esc, and relevant setting changes take effect before already-ready background answers are accepted in the same frame; held input does not indefinitely block result draining. Sampling-area `Ctrl+Z` precedes document undo while a draft is active and text input is not focused.
 - Synthesized fraction bars and operators share a math axis; spacing includes clamped pen width and bounded miter joins. Lowercase `o` is smaller than `0`, and the hooked `x` differs from `×`; this improves readability without promising unambiguous recognition.
@@ -158,7 +158,7 @@ To run the default automated suite from the repository root:
 cargo test --workspace --locked
 ```
 
-Ignored model, GPU, and performance tests require explicit execution. The v0.0.1 test/build record in the changelog is historical, not validation of Unreleased changes. Native GUI checks of keyboard/result ordering, previews, handwriting readability, and straight-line 求点, plus target i5/3 GB performance and whole-machine memory measurements, remain pending; neither automated tests nor a successful build establish complete native or distribution acceptance.
+Ignored model, GPU, and performance tests require explicit execution. The v0.0.1 and v0.0.2 test/build records in the changelog are historical for their respective tags. Native GUI checks of keyboard/result ordering, previews, handwriting readability, and straight-line 求点, plus target i5/3 GB performance and whole-machine memory measurements, remain pending; neither automated tests nor a successful build establish complete native or distribution acceptance.
 
 ## License
 

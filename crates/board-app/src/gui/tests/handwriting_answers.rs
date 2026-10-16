@@ -9,7 +9,7 @@ fn handwriting_synthesized_five(app: &BoardApp) -> ObjectKind {
     app.handwriting
         .profile
         .render_adaptive(&text_kind("5"), "5", |ch| {
-            crate::handwriting_fallback::sample(ch, None)
+            crate::handwriting_fallback::sample_with_corner(ch, None, 0.5)
         })
         .unwrap()
 }
@@ -313,7 +313,7 @@ fn handwriting_point_budget_falls_back_atomically_with_same_candidate_identity()
             .handwriting
             .profile
             .render_adaptive(&standard, &text, |ch| {
-                crate::handwriting_fallback::sample(ch, None)
+                crate::handwriting_fallback::sample_with_corner(ch, None, 0.5)
             })
             .unwrap();
         let ObjectKind::Handwritten { strokes, .. } = &generated else {
@@ -474,7 +474,7 @@ fn handwriting_standard_answer(
 ) -> (String, ObjectKind) {
     let output = features::calculation_display(expression, app.math_bounds, answer_prompt).unwrap();
     let text = output.text.clone();
-    let kind = output.into_kind(Point { x: 300.0, y: 200.0 }, app.style.color);
+    let kind = output.into_kind(Point { x: 300.0, y: 200.0 }, app.style.color, 26.0);
     (text, kind)
 }
 

@@ -7,6 +7,7 @@ mod handwriting_fallback;
 mod hosted_startup;
 mod local_capture;
 mod render_diagnostics;
+mod renderer_probe;
 
 use board_protocol::{Event, Message, read_message, write_message};
 use board_session::{AppKind, Session};
@@ -41,6 +42,7 @@ enum Launch {
     Version,
     Headless,
     Gui { hosted: bool },
+    RenderProbe(&'static str),
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Launch> {
@@ -50,6 +52,20 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Launch> {
     }
     if args == ["--version"] || args == ["-V"] {
         return Ok(Launch::Version);
+    }
+    // 渲染探测子进程：由父进程以自身可执行文件调用，必须恰好两个参数且位于
+    // 首位，绝不进入 GUI/协议路径。未知后端名报错退出（父进程视为探测失败）。
+    if args.first().map(String::as_str) == Some("--render-probe") {
+        if args.len() != 2 {
+            return Err("--render-probe 需要恰好一个后端名（vulkan/dx12/gl）".into());
+        }
+        let name = match args[1].as_str() {
+            "vulkan" => "vulkan",
+            "dx12" => "dx12",
+            "gl" => "gl",
+            other => return Err(format!("未知探测后端：{other}；使用 vulkan/dx12/gl").into()),
+        };
+        return Ok(Launch::RenderProbe(name));
     }
     let mut gui = false;
     let mut headless = false;
@@ -86,6 +102,7 @@ pub fn run(mode: AppMode) -> Result {
         }
         Launch::Headless => headless(mode),
         Launch::Gui { hosted } => gui::run(mode, hosted),
+        Launch::RenderProbe(name) => std::process::exit(renderer_probe::run_probe_cli(name)),
     }
 }
 

@@ -1,4 +1,21 @@
 use super::*;
+
+#[test]
+fn render_probe_flag_is_intercepted_before_gui_parsing() {
+    assert!(matches!(
+        parse(&["--render-probe", "vulkan"]),
+        Ok(Launch::RenderProbe("vulkan"))
+    ));
+    assert!(matches!(
+        parse(&["--render-probe", "dx12"]),
+        Ok(Launch::RenderProbe("dx12"))
+    ));
+    assert!(parse(&["--render-probe"]).is_err());
+    assert!(parse(&["--render-probe", "metal"]).is_err());
+    assert!(parse(&["--render-probe", "vulkan", "--gui"]).is_err());
+    assert!(parse(&["--gui", "--render-probe", "vulkan"]).is_err());
+}
+
 fn parse(args: &[&str]) -> Result<Launch> {
     parse_args(args.iter().map(|s| s.to_string()))
 }

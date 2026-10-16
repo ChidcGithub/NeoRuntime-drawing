@@ -24,7 +24,7 @@ fn manual_display_preserves_fraction_radical_plain_text_and_bounds() {
     ] {
         let output = calculation_display(input, bounds, true).unwrap();
         assert_eq!(output.layout.as_ref(), Some(&expected));
-        let kind = output.into_kind(Point::default(), Default::default());
+        let kind = output.into_kind(Point::default(), Default::default(), 26.0);
         assert!(matches!(kind, ObjectKind::Math { layout, .. } if layout == expected));
     }
     for (input, prompt) in [("1/2+1/3=", false), ("1/2+1/3", true)] {
@@ -48,7 +48,7 @@ fn manual_display_preserves_fraction_radical_plain_text_and_bounds() {
             assert_eq!(output.text, "x = -4");
         }
         assert!(matches!(
-            output.into_kind(Point::default(), Default::default()),
+            output.into_kind(Point::default(), Default::default(), 26.0),
             ObjectKind::Text { .. }
         ));
     }
@@ -715,4 +715,116 @@ fn snaps_to_segment_and_skips_self() {
         snap_endpoint(&page, Point { x: 50.0, y: 5.0 }, Some("line")),
         Point { x: 50.0, y: 5.0 }
     );
+}
+
+#[test]
+fn answer_size_hint_follows_tall_strokes_and_clamps_degenerate_input() {
+    let stroke = |top: f32, bottom: f32| {
+        vec![
+            StrokePoint {
+                x: 0.0,
+                y: top,
+                time: 0.0,
+                pressure: 1.0,
+            },
+            StrokePoint {
+                x: 12.0,
+                y: bottom,
+                time: 0.1,
+                pressure: 1.0,
+            },
+        ]
+    };
+    let digits = vec![
+        stroke(0.0, 40.0),
+        stroke(8.0, 32.0),
+        stroke(0.0, 40.0),
+        stroke(19.0, 21.0),
+        stroke(0.0, 40.0),
+    ];
+    assert_eq!(answer_size_hint(&digits), 40.0);
+    assert_eq!(answer_size_hint(&[]), 26.0);
+    assert_eq!(answer_size_hint(&[stroke(19.0, 21.0)]), 14.0);
+    assert_eq!(answer_size_hint(&[stroke(0.0, 800.0)]), 400.0);
+}
+
+#[test]
+fn place_answer_centers_right_side_matches_width_and_places_below_for_equations() {
+    let source = Rect::from_min_max(Pos2::new(100.0, 200.0), Pos2::new(200.0, 260.0));
+    let gap = (source.height() * 0.4).clamp(14.0, 48.0);
+    assert_eq!(gap, 24.0);
+    let ink = ObjectKind::Handwritten {
+        position: Point { x: 0.0, y: 0.0 },
+        text: "7".into(),
+        layout: None,
+        strokes: vec![board_core::HandwritingStroke {
+            points: vec![
+                StrokePoint {
+                    x: 10.0,
+                    y: 10.0,
+                    time: 0.0,
+                    pressure: 1.0,
+                },
+                StrokePoint {
+                    x: 50.0,
+                    y: 10.0,
+                    time: 0.1,
+                    pressure: 1.0,
+                },
+            ],
+            style: board_core::Style {
+                width: 3.0,
+                ..board_core::Style::default()
+            },
+        }],
+    };
+    let placed = place_answer(ink.clone(), source, Some(9.0), false);
+    let ObjectKind::Handwritten {
+        position, strokes, ..
+    } = &placed
+    else {
+        panic!()
+    };
+    assert_eq!(
+        strokes[0].style.width, 9.0,
+        "handwritten ink takes the source pen width"
+    );
+    assert_eq!(position.x, source.right() + gap);
+    let placed_bounds = board_render::object_bounds(&BoardObject {
+        id: "probe".into(),
+        kind: placed.clone(),
+    });
+    assert!((placed_bounds.center().y - source.center().y).abs() <= 0.001);
+    // Vertical centering is independent of the incoming position, and without a
+    // width hint the learned stroke widths stay untouched.
+    let mut shifted_source = ink.clone();
+    if let ObjectKind::Handwritten { position, .. } = &mut shifted_source {
+        *position = Point {
+            x: -500.0,
+            y: 900.0,
+        };
+    }
+    let shifted = place_answer(shifted_source, source, None, false);
+    let ObjectKind::Handwritten { strokes, .. } = &shifted else {
+        panic!()
+    };
+    assert_eq!(strokes[0].style.width, 3.0);
+    let shifted_bounds = board_render::object_bounds(&BoardObject {
+        id: "probe".into(),
+        kind: shifted.clone(),
+    });
+    assert!((shifted_bounds.center().y - source.center().y).abs() <= 0.001);
+    // Equations go below the source, left-aligned.
+    let equation = ObjectKind::Text {
+        position: Point { x: 0.0, y: 0.0 },
+        text: "x = 4".into(),
+        size: 60.0,
+        color: board_core::Color::default(),
+    };
+    let placed_equation = place_answer(equation, source, None, true);
+    let ObjectKind::Text { position, .. } = &placed_equation else {
+        panic!()
+    };
+    assert_eq!(position.x, source.left());
+    assert_eq!(position.y, source.bottom() + gap);
 }

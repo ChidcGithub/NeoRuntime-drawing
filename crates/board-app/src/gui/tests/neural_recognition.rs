@@ -51,10 +51,11 @@ fn simulated_texteller_answer_prompt_writes_once_to_right_and_undo_preserves_ink
         let objects = &app.session.document.current_page().objects;
         assert_eq!(objects.len(), original.len() + 1);
         assert_eq!(&objects[..original.len()], original.as_slice());
+        let placed = board_render::object_bounds(objects.last().unwrap());
         assert!(matches!(&objects.last().unwrap().kind,
             ObjectKind::Math { layout, position, .. }
-                if features::layout_text(layout) == expected && *position == features::result_position(bounds, false)
-                    && position.x > bounds.right()));
+                if features::layout_text(layout) == expected && position.x > bounds.right()
+                    && (placed.center().y - bounds.center().y).abs() <= 1.0));
         app.poll_ink_result(&ctx, now + Duration::from_secs(5), |_| panic!("duplicate"));
         drain_workers(&mut app);
         assert_eq!(
@@ -144,7 +145,9 @@ fn simulated_texteller_radical_fraction_reaches_exact_math_and_single_undo() {
     };
     let (fractions, radicals) = nodes(layout);
     assert!(fractions > 0 && radicals > 0);
-    assert_eq!(*position, features::result_position(bounds, false));
+    assert!(position.x > bounds.right());
+    let placed = board_render::object_bounds(objects.last().unwrap());
+    assert!((placed.center().y - bounds.center().y).abs() <= 1.0);
     assert_eq!(app.session.document.revision, revision + 1);
     app.poll_ink_result(&ctx, now + Duration::from_secs(5), |_| panic!("duplicate"));
     drain_workers(&mut app);
@@ -200,7 +203,7 @@ fn malformed_texteller_brace_reports_reason_and_never_writes_on_repeated_deliver
         assert!(app.math_result.contains(error));
         assert!(app.recognition.is_none());
         assert!(app.expression.is_empty());
-        assert_eq!(app.ink_action().unwrap().1, "?");
+        assert!(app.ink_action().is_none());
         assert_eq!(app.session.document.current_page().objects, original);
         assert_eq!(app.session.document.revision, revision);
         // 模拟相同请求再次投递（即使仍有有效 ticket），不能绕过解析错误。
@@ -278,7 +281,7 @@ fn neural_scores_and_completion_never_trigger_output_on_many_polls() {
             assert_eq!(recognition.confidence, 0.0);
             assert!(recognition.requires_confirmation);
         } else {
-            assert_eq!(app.ink_action().unwrap().1, "?");
+            assert!(app.ink_action().is_none());
         }
         app.expression = "1+2".into();
         app.confirm_calculation(&ctx);

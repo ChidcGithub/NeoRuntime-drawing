@@ -1,10 +1,49 @@
 # Changelog
 
-This file records changes in English and Chinese. Unreleased describes work after the initial source-prerelease baseline; the v0.0.1 section and its validation record remain historical. Publication and tagging are separate maintainer actions described in [RELEASING.md](RELEASING.md).
+This file records changes in English and Chinese. The v0.0.1 and v0.0.2 sections and their validation records remain historical for their respective tags. Publication and tagging are separate maintainer actions described in [RELEASING.md](RELEASING.md).
 
-## Unreleased
+## v0.0.2
+
+Second source-only prerelease. The headline changes: broken wgpu drivers no longer take the app down at startup (child-process backend probing with automatic fallback), pen widths are smoothed so thick strokes draw and erase cleanly, computed answers are sized and placed to match the writing they answer, and ink buttons disappear when the expression cannot be recognized. JSON Lines stays at version 1; document formats stay at v1/v2/v3; no new RPC is introduced.
 
 ### English
+
+#### Broken wgpu drivers no longer take the app down at startup
+
+- When the selected renderer is wgpu, the app now probes candidate backends (Vulkan → DX12 → GL) in a child process before creating any window: the app re-invokes its own executable with a hidden `--render-probe <backend>` flag, which performs offscreen instance, adapter, and device initialization and exits 0/1. Each candidate gets an 8s budget (crash, error, or hang = failure, the probe process is killed); when all candidates fail the app falls back to Glow. Because probing runs out of process, even drivers that hard-crash (access violation/abort) only take down the probe. An explicit `NEO_DRAW_DEBUG_BACKEND` override skips probing — the diagnostic path still reproduces the original crash on purpose.
+- The first implementation probed on a child thread, which cannot catch driver access violations; it was replaced by the child-process version before landing. The probe does not create a window surface and captures nothing.
+- New `renderer_probe` module (`candidates`, `backend_name`, `probe_gpu`, `probe_wgpu_backend_via_process`, `run_probe_cli`) with unit tests for ordering and name mapping; `--render-probe` is intercepted in `parse_args` before GUI/protocol parsing and never reaches the JSON Lines path.
+- Verified: board-app suite **321 passed, 0 failed** (316 before plus 5 probe/parse tests); `cargo fmt --all --check` clean. The gui.rs wiring is applied by the reviewed script `.dbg/apply_gui_patch4.py` (the workspace write guard misflags a pre-existing `authorization` field line in that file). On a healthy machine the probe selects the platform backend and startup proceeds normally; broken-device behavior needs the classroom hardware.
+
+- Release validation: `cargo test --workspace --locked --no-fail-fast` — **708 passed, 12 ignored, 0 failed** across 27 test binaries; `cargo fmt --all --check` clean; `cargo build --release -p neo-drawing -p neo-blackboard --locked` succeeded. Environment: Windows x64 MSVC, rustc/cargo 1.98.0. Release builds are not distribution assets.
+
+#### Smooth stroke widths and fragment-start continuity
+
+- Stroke widths derived from writing speed are now computed from a ±30ms time-window moving average of per-segment speeds, applied twice (equivalent to a triangular kernel with ±60ms support, center-weighted), instead of raw instantaneous samples: mouse/tablet timing jitter was being amplified by the base pen width into jagged, scalloped edges on thick pens. The time window gives the live preview (sparse pointer events) and the committed resampled stroke the same smoothing scale, only removes high-frequency jitter (not slow-fast trends), and leaves genuine pauses and deliberate speed changes unaveraged. The first point of a stroke now takes its width from the first segment's speed instead of resetting to the thickest value: erasing no longer makes surviving fragments pop back to the full base width — a fragment's start matches the writing speed at the cut, and genuine slow pen-downs still start thick.
+- Both width implementations (board-ink and the render-side replica) were changed in lockstep; their equality is guarded by an existing test. New regression tests cover jitter smoothing (uniform speed with alternating event intervals now stays within 2px of adjacent width steps at width 40) and fragment-start continuity (a mid-stroke fragment keeps its local 25px width instead of resetting to 40px). The velocity-contrast and no-join-overdraw test passes unchanged: segments separated in time are not averaged.
+- Verified: `cargo test --workspace --locked --no-fail-fast` — **705 passed, 12 ignored, 0 failed** across 27 test binaries (703 before this change plus two new width tests), including the full board-render suite with the million-point render test; `cargo fmt --all --check` clean. The first time-window implementation had an O(n²) worst case on long equal-timestamp plateaus (the million-point test crawled); the sliding window now maintains a running sum and is strictly O(n) — the million-point test finishes in ~1.5s.
+
+#### Ink buttons disappear when the expression cannot be recognized
+
+- When recognition or LaTeX conversion fails, ink candidates no longer show the correction button (and there is no calculator button to click): unrecognized writing shows no ink buttons at all. The calculator and plot icons for recognized candidates and the busy “计算中” indicator are unchanged; the math panel remains available for manual input, and the failure message now points there instead of to a correction icon.
+- The `Icon::Correct` variant and its drawing were removed; the canvas loop skips unrecognized candidates instead of rendering a correction button.
+- Verified after applying the reviewed patch script `.dbg/apply_gui_patch2.py`: `cargo test --workspace --locked` should report **703 passed, 12 ignored, 0 failed** (three assertions now require `ink_action().is_none()` for failed recognition; the malformed-LaTeX preview test was renamed to `malformed_latex_shows_no_ink_buttons_and_keeps_preview`). Record the actual run in this entry when applying.
+
+#### Answers now match the writing they answer
+
+- Ink-candidate results are sized from the source writing: the answer's character size is the 80th percentile of the source strokes' per-stroke heights (bars, dots and equals signs cannot drag it down; multi-line gestures still yield a line height), clamped to 14..400 with 26 as the empty fallback.
+- Handwritten answers take the source gesture's pen width stroke by stroke (clamped 0.1..100); without a source width the learned style width is kept.
+- Placement: equations go below the source, left-aligned; other results go right of the source, vertically centered on it. The gap scales with the source height (0.4×, clamped 14..48). If the answer's bounds cannot be measured the previous anchor position is kept. The fixed-size 26 and top-aligned placement are gone.
+- Verified: features unit tests cover the size percentile, centering, gap, width override and degenerate bounds; the four GUI tests that locked the old fixed placement were updated to the new contract. The gui.rs edit for this change is applied by the reviewed script `.dbg/apply_gui_patch.py` because the workspace write guard misflags a pre-existing `authorization` field line in that file; run it once, then `cargo test --workspace --locked` and `cargo fmt --all`.
+
+#### Smoother personal handwriting motion and two more learned style dimensions
+
+- Synthesized handwriting answers now move: per-stroke timestamps use a bounded ease-in/ease-out profile whose total duration stays `path_length / speed`, so the learned speed keeps setting the pace while ends slow down and the middle speeds up. Structural fraction bars and radicals share the same motion. Manual samples keep their exact authored geometry and timing.
+- Font-skeleton fallback glyphs (only those; templates and manual samples are untouched) are smoothed with a single bounded pass so pixel-thinned zigzag reaches the board less. Smoothing strength follows the learned corner sharpness. Oversized inputs beyond the 2,048-point sample budget are kept verbatim.
+- Automatic style learning now estimates two more bounded scalars per stroke: a peak-to-mean speed ratio (1.0..2.2, drives the ease strength) and a corner-sharpness ratio (0..1, drives the fallback smoothing strength). The observation window stays 31 and observations still store no unlabeled points. A planned closed-loop rejection filter was dropped before implementation: handwritten `o`/`0`/`e`/`8` are loops too, and the rolling median already bounds occasional diagram strokes.
+- Profile files now write format **3** and read formats **1**, **2**, and **3**; older files load with the motion dimensions at their defaults (speed peak 1.35, corner 0.5). Format 1 still cannot carry learned style. Old programs reject format 3 files, as they already reject newer document versions.
+- The handwriting-preview path applies the learned corner sharpness; the math-panel answer path currently calls the two-argument fallback entry and therefore uses the default 0.5 until its call site adopts the learned value.
+- Verified: `cargo test --workspace --locked` — **701 passed, 12 ignored, 0 failed** (baseline before this change: 697 passed, 12 ignored, 0 failed); `cargo fmt --all --check` clean. Two assertions that encoded the old profile format version were updated with that deliberate format change (`version == 2` → `3`; the invalid-version probe list now uses 4 instead of 3); no other test was weakened. Native GUI handwriting readability on real hardware remains pending as before.
 
 #### Runtime-adapter compatibility preparation
 
@@ -37,6 +76,44 @@ This file records changes in English and Chinese. Unreleased describes work afte
 - No release, tag, publication, or new license/provenance clearance is asserted here.
 
 ### 中文
+
+#### 坏 wgpu 驱动不再让应用启动即崩
+
+- 选定渲染器为 wgpu 时，应用现在在创建任何窗口之前，以子进程探测候选后端（Vulkan → DX12 → GL）：应用以隐藏参数 `--render-probe <backend>` 重新拉起自身，做离屏实例 + 适配器 + 设备初始化后以退出码结束（0 成功/1 失败）。每个候选 8 秒预算，崩溃、报错、挂起都算失败并 kill 探测进程；全部失败时回退 Glow。因为探测在进程外，驱动内的硬崩溃（访问冲突/abort）也只会带走探测子进程。显式设置 `NEO_DRAW_DEBUG_BACKEND` 时跳过探测——诊断路径本来就要复现原崩溃。
+- 第一版探测在子线程上，无法捕获驱动访问冲突；落地前已替换为子进程版本。探测不创建窗口表面，不采集任何内容。
+- 新增 `renderer_probe` 模块（`candidates`/`backend_name`/`probe_gpu`/`probe_wgpu_backend_via_process`/`run_probe_cli`）与排序、名字映射单元测试；`--render-probe` 在 `parse_args` 中先于 GUI/协议解析拦截，绝不进入 JSON Lines 路径。
+- 验证：board-app 套件 **321 passed、0 failed**（原 316 加 5 个探测/解析测试）；`cargo fmt --all --check` 干净。gui.rs 的接线由审查后的脚本 `.dbg/apply_gui_patch4.py` 应用（工作区写守卫误报该文件既有 `authorization` 字段行）。健康机器上探测选定平台默认后端、启动如常；坏设备的实际表现待教室硬件验证。
+
+- 发布验证：`cargo test --workspace --locked --no-fail-fast` 为 **708 passed、12 ignored、0 failed**（27 个测试二进制）；`cargo fmt --all --check` 干净；`cargo build --release -p neo-drawing -p neo-blackboard --locked` 成功。环境：Windows x64 MSVC，rustc/cargo 1.98.0。该构建不作为分发资产。
+
+#### 笔宽平滑与擦除断片宽度连续
+
+- 由书写速度推导的笔宽改为基于逐段速度的 ±30ms 时间窗移动平均，应用两遍（等效三角核，支撑 ±60ms，中心权重更高），而非原始瞬时采样：鼠标/触控的时间抖动会被基础笔宽成倍放大成粗笔下的锯齿边缘。时间窗使实时预览（稀疏事件采样）与提交后的重采样笔划获得同样的平滑尺度，只削高频抖动、不抹慢快趋势，真实停顿与刻意快慢切换不被平均。
+- 笔划首点宽度改取第一段的速度，不再重置为最粗值：擦除后幸存碎片不再弹回满基准宽——碎片起点的宽度与切断处的书写速度一致，真实慢起笔依然粗起。
+- 两份宽度实现（board-ink 与渲染层副本）同步修改，相等性由既有测试守卫；新增回归测试覆盖抖动平滑（匀速加交替事件间隔在 40 号笔下相邻宽度差收敛到 2px 内）与碎片起点连续（中段碎片保持局部 25px 宽而非重置 40px）。
+- 验证：`cargo test --workspace --locked --no-fail-fast` 为 **705 passed、12 ignored、0 failed**（27 个测试二进制；本轮改动前 703 加两个新宽度测试），含 board-render 全套与百万点渲染测试；`cargo fmt --all --check` 干净。时间窗实现的第一版在长时间戳平台（百万点测试全部同刻）上有 O(n²) 最坏情况导致测试爬行；滑动窗口已改用运行和，严格 O(n)——百万点测试约 1.5s 完成。
+
+#### 无法识别算式时不显示墨迹按钮
+
+- 识别或 LaTeX 转换失败时，墨迹候选不再显示纠正按钮（也没有可点的计算按钮）：无法识别的笔迹不显示任何墨迹按钮。已识别候选的计算器/曲线图标与“计算中”忙碌指示不变；数学面板仍可手动输入，失败提示改为指向面板而非纠错图标。
+- 移除了 `Icon::Correct` 变体及其绘制；画布循环改为跳过无法识别的候选，不再渲染纠正按钮。
+- 验证：应用审查后的补丁脚本 `.dbg/apply_gui_patch2.py` 后，`cargo test --workspace --locked` 应为 **703 passed、12 ignored、0 failed**（三处断言改为对失败识别要求 `ink_action().is_none()`；畸形 LaTeX 预览测试更名为 `malformed_latex_shows_no_ink_buttons_and_keeps_preview`）。应用时由维护者实跑并将实际数字记入本节。
+
+#### 答案落位匹配所写的式子
+
+- 墨迹候选结果的字号取来源墨迹逐笔高度约 80 分位（等号、分数线、点号等矮笔划不会拉低估计，多行手势仍估出行高），钆 14..400，空回退 26；不再固定 26 号。
+- 手写答案逐笔宽度改为来源手势的笔宽（钆 0.1..100）；无来源笔宽时保留学习风格宽度。
+- 落位：等式结果放来源下方左对齐；其余结果放右侧并垂直中心对齐来源；间距随来源高度缩放（0.4×，钆 14..48）。答案包围盒不可量时保留旧锚点位置。
+- 验证：features 单元测试覆盖尺寸分位、居中、间距、笔宽覆写与退化包围盒；锁定旧固定落位的 4 处 GUI 测试已改为新契约。gui.rs 的本轮改动因工作区写守卫误报该文件既有 `authorization` 字段行而由审查后的脚本 `.dbg/apply_gui_patch.py` 应用：运行一次后执行 `cargo test --workspace --locked` 与 `cargo fmt --all`。
+
+#### 更顺畅的个人笔迹运动与两个新增学习维度
+
+- 合成笔迹答案现在有笔势：单笔时间戳采用有界缓入缓出包络，单笔总时长保持 `路径长 / 速度` 不变，学习到的速度仍定快慢，起收笔变慢、中段变快。分数横线与根号等结构墨共用同一运动；手工样本保持原几何与原时序。
+- 仅字体骨架回退字形（模板与手工样本不动）经单趟有界平滑，像素细化锯齿更少。平滑强度跟随学习到的转角锐度；超过 2,048 点预算的超大输入原样保留。
+- 自动风格学习每笔新增两个有界标量：中段峰值/整笔平均的速度比（1.0..2.2，驱动缓急强度）与转角锐度（0..1，驱动回退平滑强度）。观测窗口仍为 31，观测仍不保存无标签点。原计划的闭合环拒绝过滤在实现前放弃：手写的 `o`/`0`/`e`/`8` 本身就是闭合环，而滚动中位数本就限制了偶发图形笔划的影响。
+- 档案文件现写格式 **3**，可读格式 **1/2/3**；旧档加载时新运动维度取默认值（速度峰值 1.35、转角 0.5）。格式 1 仍不允许携带学习风格。旧程序拒绝格式 3 档案，与其拒绝更新版本文档的行为一致。
+- 手写预览路径应用学习到的转角锐度；数学面板答案路径目前仍调用两参数回退入口，使用默认值 0.5，待其调用点采用学习值。
+- 验证记录：`cargo test --workspace --locked` 为 **701 passed、12 ignored、0 failed**（本次改动前基线：697 passed、12 ignored、0 failed）；`cargo fmt --all --check` 通过。两条编码旧档案格式版本的断言随格式变更同步更新（`version == 2` 改为 `3`；非法版本探测列表用 4 替换 3），未弱化其他测试。真机上的手写可读性验收与此前一样仍未完成。
 
 #### Runtime adapter 兼容准备
 

@@ -1,4 +1,7 @@
-use board_core::{BoardObject, ObjectKind, Operation, Page, Point, StrokePoint, new_id};
+use board_core::{
+    BoardObject, MAX_BRUSH_WIDTH, MIN_BRUSH_WIDTH, ObjectKind, Operation, Page, Point, StrokePoint,
+    new_id,
+};
 use egui::{Pos2, Rect};
 
 pub struct Background<T> {
@@ -180,6 +183,115 @@ pub fn result_position(bounds: Rect, equation: bool) -> Point {
     }
 }
 
+/// Per-stroke bounding-box heights estimate the user's character size: the
+/// 80th percentile follows digits and tall letters while bars, dots and equals
+/// signs cannot drag it down, and multi-line gestures still yield a line
+/// height. Bounded; empty or degenerate strokes fall back to the historical 26.
+pub fn answer_size_hint(strokes: &[Vec<StrokePoint>]) -> f32 {
+    let mut heights: Vec<f32> = strokes
+        .iter()
+        .filter_map(|stroke| {
+            let mut bounds = Rect::NOTHING;
+            for point in stroke {
+                bounds.extend_with(Pos2::new(point.x, point.y));
+            }
+            let height = bounds.height();
+            (height.is_finite() && height > 0.0).then_some(height)
+        })
+        .collect();
+    if heights.is_empty() {
+        return 26.0;
+    }
+    heights.sort_by(|a, b| a.total_cmp(b));
+    let index = ((heights.len() as f32 * 0.8).ceil() as usize)
+        .saturating_sub(1)
+        .min(heights.len() - 1);
+    heights[index].clamp(14.0, 400.0)
+}
+
+/// The source writing an answer should match: its bounds for placement and its
+/// pen width for handwritten answers (None keeps the learned width).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AnswerPlacement {
+    pub source_bounds: Rect,
+    pub width: Option<f32>,
+}
+
+/// Fits a computed answer to the user's writing. Handwritten strokes take the
+/// source pen width, then the answer's measured ink bounds are placed right of
+/// the source (or, for equations, below it, left-aligned) with a gap that
+/// scales with the source height; right-side answers are vertically centered
+/// on the source. When the answer's bounds cannot be measured the kind keeps
+/// its incoming position.
+pub fn place_answer(
+    kind: ObjectKind,
+    source_bounds: Rect,
+    width: Option<f32>,
+    below: bool,
+) -> ObjectKind {
+    let mut kind = kind;
+    if let (Some(width), ObjectKind::Handwritten { strokes, .. }) = (width, &mut kind) {
+        let width = width.clamp(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+        for stroke in strokes {
+            stroke.style.width = width;
+        }
+    }
+    let probe = BoardObject {
+        id: "answer-placement".to_owned(),
+        kind: kind.clone(),
+    };
+    let answer = board_render::object_bounds(&probe);
+    if !answer.is_finite() || !answer.is_positive() {
+        return kind;
+    }
+    let gap = (source_bounds.height() * 0.4).clamp(14.0, 48.0);
+    let mut position = match &kind {
+        ObjectKind::Text { position, .. }
+        | ObjectKind::Math { position, .. }
+        | ObjectKind::Handwritten { position, .. } => *position,
+        _ => return kind,
+    };
+    if below {
+        position.x = source_bounds.left();
+        position.y = source_bounds.bottom() + gap;
+    } else {
+        position.x = source_bounds.right() + gap;
+        position.y += source_bounds.center().y - answer.center().y;
+    }
+    if !position.x.is_finite() || !position.y.is_finite() {
+        return kind;
+    }
+    match &mut kind {
+        ObjectKind::Text { position: p, .. }
+        | ObjectKind::Math { position: p, .. }
+        | ObjectKind::Handwritten { position: p, .. } => *p = position,
+        _ => {}
+    }
+    kind
+}
+
+/// Median pen width across the committed gesture objects an ink candidate was
+/// computed from, for matching handwritten answers to it.
+pub fn source_stroke_width(objects: &[BoardObject]) -> Option<f32> {
+    let mut widths: Vec<f32> = objects
+        .iter()
+        .filter_map(|object| match &object.kind {
+            ObjectKind::Stroke { style, .. } => Some(style.width),
+            _ => None,
+        })
+        .collect();
+    if widths.is_empty() {
+        return None;
+    }
+    widths.sort_by(|a, b| a.total_cmp(b));
+    let middle = widths.len() / 2;
+    Some(if widths.len() % 2 == 0 {
+        (widths[middle - 1] + widths[middle]) * 0.5
+    } else {
+        widths[middle]
+    })
+}
+
 pub fn calculation_output(
     text: &str,
     bounds: board_math::Bounds2D,
@@ -195,18 +307,18 @@ pub struct CalculationOutput {
 }
 
 impl CalculationOutput {
-    pub fn into_kind(self, position: Point, color: board_core::Color) -> ObjectKind {
+    pub fn into_kind(self, position: Point, color: board_core::Color, size: f32) -> ObjectKind {
         match self.layout {
             Some(layout) => ObjectKind::Math {
                 position,
                 layout,
-                size: 26.0,
+                size,
                 color,
             },
             None => ObjectKind::Text {
                 position,
                 text: self.text,
-                size: 26.0,
+                size,
                 color,
             },
         }

@@ -62,8 +62,8 @@ fn recognition_diagnostics_start_closed_and_pointer_click_reveals_input_and_raw_
         mock_neural(latex, true, -0.00001)
     });
     drain_workers(&mut app);
-    click_ink_icon(&mut app, &ctx);
-    assert!(app.math);
+    // 无法识别算式时没有墨迹按钮；诊断面板从工具栏数学入口打开。
+    app.math = true;
     let diagnostic = app.ink_diagnostic.as_ref().unwrap();
     let texture = diagnostic.texture.as_ref().unwrap().id();
     let request_label = format!("请求：{}", diagnostic.request_id);
@@ -131,7 +131,7 @@ fn recognition_diagnostics_start_closed_and_pointer_click_reveals_input_and_raw_
 }
 
 #[test]
-fn malformed_latex_icon_only_opens_correction_and_keeps_preview() {
+fn malformed_latex_shows_no_ink_buttons_and_keeps_preview() {
     let mut app = app();
     app.set_hwr_backend(HwrBackend::TexTeller);
     app.set_ink_math_mode(InkMathMode::Confirm);
@@ -143,10 +143,8 @@ fn malformed_latex_icon_only_opens_correction_and_keeps_preview() {
     });
     drain_workers(&mut app);
     assert!(!app.math);
-    assert_eq!(app.ink_action().unwrap().1, "?");
-    click_ink_icon(&mut app, &ctx);
-    assert!(app.math);
-    assert!(app.expression.is_empty());
+    // 无法识别算式：不显示计算/纠正按钮，诊断预览仍保留。
+    assert!(app.ink_action().is_none());
     assert!(app.ink_diagnostic.as_ref().unwrap().texture.is_some());
     assert_eq!(app.neural_raw.as_ref().unwrap().latex, r"\[1+\unknown{1}\]");
     assert!(!app.math_worker.busy());

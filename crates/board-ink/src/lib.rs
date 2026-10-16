@@ -298,6 +298,10 @@ pub fn smooth_resample(
 
 /// 返回与输入一一对应的宽度；无压感设备传 pressure=1。速度越快越细。
 /// speed_scale 是宽度明显衰减时的坐标单位/秒，pressure_weight 范围 0..=1。
+/// 逐段速度先做 ±30ms 时间窗的箱式平均：事件采样间隔的抖动在粗笔宽下会被
+/// 基础宽度成倍放大成锯齿边缘；时间窗让实时预览（事件采样稀疏）与提交后
+/// 的重采样笔划获得同样的平滑尺度，真实停顿与快慢切换互不平均。首点取
+/// 第一段的速度而不是最粗值，擦除断片与真实起笔都由本地速度决定宽度。
 pub fn stroke_widths(
     points: &[StrokePoint],
     style: &Style,
@@ -315,27 +319,82 @@ pub fn stroke_widths(
     {
         return Err(InkError::InvalidInput);
     }
+    let count = points.len();
+    let mut speeds = vec![0.0_f64; count.saturating_sub(1)];
+    let mut times = Vec::with_capacity(count);
     let mut previous_time = points.first().map_or(0.0, |p| p.time);
-    let mut previous_speed = 0.0;
-    let mut result = Vec::with_capacity(points.len());
-    for (i, p) in points.iter().enumerate() {
-        let time = p.time.max(previous_time);
-        let dt = time - previous_time;
-        let speed = if i == 0 {
-            0.0
-        } else if dt > 1e-6 {
-            distance(position(&points[i - 1]), position(p)) / dt
+    times.push(previous_time);
+    for i in 1..count {
+        let time = points[i].time.max(previous_time);
+        times.push(time);
+        speeds[i - 1] = if time - previous_time > 1e-6 {
+            distance(position(&points[i - 1]), position(&points[i])) / (time - previous_time)
+        } else if i > 1 {
+            speeds[i - 2]
         } else {
-            previous_speed
+            0.0
+        };
+        previous_time = time;
+    }
+    smooth_speeds(&mut speeds, &times);
+    let mut result = Vec::with_capacity(count);
+    for (i, p) in points.iter().enumerate() {
+        let speed = if i == 0 {
+            speeds.first().copied().unwrap_or(0.0)
+        } else {
+            speeds[i - 1]
         };
         let velocity = 0.25 + 0.75 / (1.0 + speed / speed_scale as f64);
         let pressure = 1.0 - pressure_weight as f64
             + pressure_weight as f64 * (0.2 + 0.8 * p.pressure.clamp(0.0, 1.0) as f64);
         result.push((style.width as f64 * velocity * pressure).max(0.01) as f32);
-        previous_time = time;
-        previous_speed = speed;
     }
     Ok(result)
+}
+
+/// 逐段速度的 ±30ms 时间窗箱式平均，应用两遍（等效三角核，支撑 ±60ms，
+/// 中心权重更高）：只削事件采样间隔的高频抖动，保留慢快趋势与端点渐变；
+/// 时间窗使不同采样密度（实时事件 vs 重采样笔划）得到同样的平滑尺度，
+/// 时间上相隔久远的段（真实停顿、刻意快慢切换）互不平均。滑动窗口配运行
+/// 和：窗口两端随 j 单调前进，整体严格 O(n)；时间戳长平台（如合成数据全部
+/// 同刻）的窗口会覆盖整段平台，运行和保证不退化成逐点重扫。
+pub fn smooth_speeds(speeds: &mut [f64], times: &[f64]) {
+    const WINDOW: f64 = 0.03;
+    let count = speeds.len();
+    if count < 2 {
+        return;
+    }
+    let mut mids = Vec::with_capacity(count);
+    for j in 0..count {
+        mids.push((times[j] + times[j + 1]) / 2.0);
+    }
+    let first = box_pass(speeds, &mids, WINDOW);
+    let second = box_pass(&first, &mids, WINDOW);
+    speeds.clone_from_slice(&second);
+}
+
+fn box_pass(speeds: &[f64], mids: &[f64], window: f64) -> Vec<f64> {
+    let count = speeds.len();
+    let mut smoothed = Vec::with_capacity(count);
+    let mut start = 0_usize;
+    let mut end = 0_usize;
+    let mut sum = speeds[0];
+    for j in 0..count {
+        while mids[j] - mids[start] > window {
+            sum -= speeds[start];
+            start += 1;
+        }
+        if end < start {
+            end = start;
+            sum = speeds[start];
+        }
+        while end + 1 < count && mids[end + 1] - mids[j] <= window {
+            end += 1;
+            sum += speeds[end];
+        }
+        smoothed.push(sum / (end - start + 1) as f64);
+    }
+    smoothed
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

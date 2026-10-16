@@ -13,7 +13,7 @@ cargo build --release -p neo-blackboard --locked
 
 - No arguments or `--help` shows help without opening a window; `--version` shows the version. Help and version output use stderr.
 - `--headless` provides windowless JSON Lines communication. `--gui --hosted` waits for host configuration before creating a native window; host services are separate.
-- Blackboard defaults to **wgpu**, including on Windows; Windows Drawing defaults to Glow/OpenGL. Override with `NEO_DRAW_RENDERER=wgpu` or `glow`, or remove the variable to restore defaults. There is no automatic fallback.
+- Blackboard defaults to **wgpu**, including on Windows; Windows Drawing defaults to Glow/OpenGL. Override with `NEO_DRAW_RENDERER=wgpu` or `glow`, or remove the variable to restore defaults. wgpu backends (Vulkan → DX12 → GL) are probed in a child process at startup; candidates that crash, error, or hang are skipped and the app falls back to Glow when all fail.
 
 ## Writing and navigation
 

@@ -181,7 +181,7 @@ fn render_preview(
         color: Color::default(),
     };
     profile.render_adaptive(&kind, text, |ch| {
-        crate::handwriting_fallback::sample(ch, font)
+        crate::handwriting_fallback::sample_with_corner(ch, font, profile.style_corner())
     })
 }
 
@@ -1017,7 +1017,7 @@ mod tests {
         };
         let expected = profile
             .render_adaptive(&kind, text, |ch| {
-                crate::handwriting_fallback::sample(ch, None)
+                crate::handwriting_fallback::sample_with_corner(ch, None, 0.5)
             })
             .unwrap();
         assert_eq!(render_preview(&profile, text, None).unwrap(), expected);

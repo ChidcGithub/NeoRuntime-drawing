@@ -553,7 +553,7 @@ fn personalize_math(
         return Ok((text, Some(kind), None));
     }
     match profile.render_adaptive(&kind, &text, |ch| {
-        crate::handwriting_fallback::sample(ch, font)
+        crate::handwriting_fallback::sample_with_corner(ch, font, profile.style_corner())
     }) {
         Ok(handwritten) => Ok((text, Some(handwritten), Some(kind))),
         Err(error) => Ok((
@@ -695,7 +695,7 @@ pub fn run(mode: AppMode, hosted: bool) -> Result {
             | crate::hosted_startup::StartupOutcome::Disconnected => return Ok(()),
         }
     }
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         renderer,
         viewport: egui::ViewportBuilder::default()
             .with_title(mode.title())
@@ -711,6 +711,33 @@ pub fn run(mode: AppMode, hosted: bool) -> Result {
         std::env::var("NEO_DRAW_DEBUG").ok().as_deref(),
         std::env::var("NEO_DRAW_DEBUG_BACKEND").ok().as_deref(),
     );
+    // wgpu 后端探测：以子进程重新拉起自身，依次初始化候选后端（实例+适配器+
+    // 设备）。驱动内的硬崩溃只杀死探测子进程，主进程按退出码/超时回退下一个
+    // 候选或 Glow。显式强制 NEO_DRAW_DEBUG_BACKEND 时跳过探测——诊断场景需要
+    // 复现原崩溃。
+    if renderer == eframe::Renderer::Wgpu && debug_backend.is_none() {
+        let probe = std::env::current_exe().ok().and_then(|exe| {
+            crate::renderer_probe::probe_wgpu_backend_via_process(
+                &exe,
+                &crate::renderer_probe::candidates(None),
+                crate::renderer_probe::PROBE_TIMEOUT,
+            )
+        });
+        match probe {
+            Some(backends) => {
+                if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) =
+                    &mut options.wgpu_options.wgpu_setup
+                {
+                    setup.instance_descriptor.backends = backends;
+                }
+                eprintln!("[render] wgpu 探测选定后端 {backends:?}");
+            }
+            None => {
+                eprintln!("[render] wgpu 后端探测全部失败，回退 Glow 渲染器");
+                options.renderer = eframe::Renderer::Glow;
+            }
+        }
+    }
     let options = {
         let mut options = options;
         if let Some(backend) = debug_backend
@@ -1374,6 +1401,19 @@ impl BoardApp {
         ctx: &egui::Context,
         work: impl FnOnce() -> MathResult + Send + 'static,
     ) {
+        self.start_math_placed(ctx, None, work);
+    }
+
+    /// `placement` fits the answer to the writing it was computed from. The
+    /// side (below equations, right of everything else) comes from the
+    /// standard result kind inside the personalized output, so the handwritten
+    /// rendering and the fallback-standard rendering land in the same spot.
+    fn start_math_placed(
+        &mut self,
+        ctx: &egui::Context,
+        placement: Option<features::AnswerPlacement>,
+        work: impl FnOnce() -> MathResult + Send + 'static,
+    ) {
         if self.math_worker.busy() {
             self.math_result = "上一项计算仍在排空，请稍后重试".into();
             return;
@@ -1392,7 +1432,25 @@ impl BoardApp {
             .then(|| self.handwriting.profile.clone());
         let font = self.export_resources.handwriting_font();
         self.math_worker.start(ctx.clone(), move || {
-            let result = personalize_math(work(), profile.as_ref(), font.as_ref());
+            let result = match personalize_math(work(), profile.as_ref(), font.as_ref()) {
+                Ok((text, object, fallback)) => {
+                    let below = fallback
+                        .as_ref()
+                        .or(object.as_ref())
+                        .is_some_and(|kind| matches!(kind, ObjectKind::Text { .. }));
+                    let place = |kind: ObjectKind| match &placement {
+                        Some(placement) => features::place_answer(
+                            kind,
+                            placement.source_bounds,
+                            placement.width,
+                            below,
+                        ),
+                        None => kind,
+                    };
+                    Ok((text, object.map(place), fallback.map(place)))
+                }
+                Err(error) => Err(error),
+            };
             (ticket, context, result)
         });
     }
@@ -1623,7 +1681,7 @@ impl BoardApp {
                         }
                         Err(error) => {
                             self.math_result = format!(
-                                "识别失败，未写入，请点击纠错图标查看原输入并手动纠错：{error}"
+                                "识别失败，未写入；可在数学面板手动输入后计算或写板：{error}"
                             )
                         }
                     }
@@ -3138,7 +3196,8 @@ impl BoardApp {
                         self.start_math(ctx, move || {
                             let output = features::calculation_display(&expression, bounds, true).map_err(|e| e.to_string())?;
                             let result = output.text.clone();
-                            let kind = output.into_kind(Point { x: 80.0, y: 80.0 }, color);
+                            let kind =
+                                output.into_kind(Point { x: 80.0, y: 80.0 }, color, 26.0);
                             Ok((result, Some(kind)))
                         });
                     }
@@ -3214,6 +3273,7 @@ impl BoardApp {
         if entry.result_present {
             return;
         }
+        let source_width = features::source_stroke_width(&entry.source);
         if !self.activate_candidate(&id) {
             return;
         }
@@ -3222,12 +3282,19 @@ impl BoardApp {
             return;
         }
         let request = self.calculation.as_ref().unwrap().clone();
-        self.calculate_ink(ctx, &request);
+        let size_hint = features::answer_size_hint(&request.strokes);
+        self.calculate_ink(ctx, &request, size_hint, source_width);
         self.running_candidate = Some((id, self.ink_cache.epoch));
         self.calculating_ink = Some(features::ink_bounds(&request.strokes));
     }
 
-    fn calculate_ink(&mut self, ctx: &egui::Context, request: &CalculationRequest) {
+    fn calculate_ink(
+        &mut self,
+        ctx: &egui::Context,
+        request: &CalculationRequest,
+        size_hint: f32,
+        width: Option<f32>,
+    ) {
         let bounds = features::ink_bounds(&request.strokes);
         let expression = self.expression.clone();
         // Revalidate raw metadata against the current input, including manual corrections.
@@ -3237,13 +3304,20 @@ impl BoardApp {
         });
         let math_bounds = self.math_bounds;
         let color = self.style.color;
-        self.start_math(ctx, move || {
-            let output = features::calculation_display(&expression, math_bounds, answer_prompt)
-                .map_err(|e| e.to_string())?;
-            let position = features::result_position(bounds, output.equation);
-            let result = output.text.clone();
-            Ok((result, Some(output.into_kind(position, color))))
-        });
+        self.start_math_placed(
+            ctx,
+            Some(features::AnswerPlacement {
+                source_bounds: bounds,
+                width,
+            }),
+            move || {
+                let output = features::calculation_display(&expression, math_bounds, answer_prompt)
+                    .map_err(|e| e.to_string())?;
+                let position = features::result_position(bounds, output.equation);
+                let result = output.text.clone();
+                Ok((result, Some(output.into_kind(position, color, size_hint))))
+            },
+        );
     }
     fn authorized_asset_refs(&self) -> Vec<String> {
         if !self.authorize_assets {
@@ -3461,14 +3535,16 @@ impl BoardApp {
         {
             return None;
         }
-        let (icon, hover) = if self.recognition.is_none()
+        if self.recognition.is_none()
             || self
                 .neural_raw
                 .as_ref()
                 .is_some_and(|raw| latex_to_expression(&raw.latex).is_err())
         {
-            ("?", "查看原输入并纠错")
-        } else if features::function_expression(&self.expression).is_some() {
+            // 无法识别算式：不显示计算/纠正按钮。
+            return None;
+        }
+        let (icon, hover) = if features::function_expression(&self.expression).is_some() {
             ("f", "生成函数图像")
         } else {
             ("=", "计算")
@@ -3542,7 +3618,7 @@ impl BoardApp {
                     && !self.allow_close
                     && !self.confirm_close
             })
-            .map(|entry| {
+            .filter_map(|entry| {
                 let (icon, hover) = if self
                     .running_candidate
                     .as_ref()
@@ -3550,13 +3626,14 @@ impl BoardApp {
                 {
                     (Icon::Calculator, "计算中")
                 } else if entry.recognition.is_none() && entry.expression.is_empty() {
-                    (Icon::Correct, "查看原输入并纠错")
+                    // 无法识别算式：不显示计算/纠正按钮。
+                    return None;
                 } else if features::function_expression(&entry.expression).is_some() {
                     (Icon::Plot, "生成函数图像")
                 } else {
                     (Icon::Calculator, "计算")
                 };
-                (entry.id.clone(), entry.bounds, icon, hover)
+                Some((entry.id.clone(), entry.bounds, icon, hover))
             })
             .collect();
         let mut occupied = self.controls.clone();

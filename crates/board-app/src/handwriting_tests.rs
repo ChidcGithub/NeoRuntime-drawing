@@ -122,6 +122,7 @@ fn vertical_pen_overhang_pads_lines_and_math_without_changing_baseline_offsets()
         strokes: 0,
         points: 0,
         pen_width: profile.median_width(),
+        motion_peak: profile.style.motion_peak(),
     };
     let plan = planner.text("1.\n1", 72.0).unwrap();
     let radius = ink_extent(100.0, 1.0);
@@ -280,7 +281,7 @@ fn fraction_axis_matches_authored_operators_in_rows_and_nested_layouts() {
             };
             let rendered = profile
                 .render_adaptive(&kind, "axis", |ch| {
-                    crate::handwriting_fallback::sample(ch, None)
+                    crate::handwriting_fallback::sample_with_corner(ch, None, 0.5)
                 })
                 .unwrap();
             let ink = strokes(&rendered);
@@ -638,7 +639,7 @@ fn json_roundtrip_version_validation_and_import_budgets() {
         assert!(Profile::from_json(bad).is_err());
     }
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    for version in [0, 3, 100] {
+    for version in [0, 4, 100] {
         let mut bad = value.clone();
         bad["version"] = version.into();
         assert!(
@@ -683,6 +684,201 @@ fn learning_stroke(segments: usize) -> Vec<StrokePoint> {
             }
         })
         .collect()
+}
+
+fn middle_fast_stroke() -> Vec<StrokePoint> {
+    // Same diagonal geometry as learning_stroke, but the timestamps compress
+    // the middle third: t(u) = T*(u + k*sin(2πu)/(2π)) with k = 0.7.
+    let segments = 8;
+    (0..=segments)
+        .map(|i| {
+            let u = i as f32 / segments as f32;
+            let time = 0.8
+                * (u as f64
+                    + 0.7 * (2.0 * std::f64::consts::PI * u as f64).sin()
+                        / (2.0 * std::f64::consts::PI));
+            StrokePoint {
+                x: 300.0 + 36.0 * u,
+                y: 200.0 + 72.0 * u,
+                time,
+                pressure: 1.0,
+            }
+        })
+        .collect()
+}
+
+fn arc_glyph() -> Vec<HandwritingStroke> {
+    vec![HandwritingStroke {
+        points: (0..=32)
+            .map(|i| {
+                let u = i as f32 / 32.0;
+                StrokePoint {
+                    x: 64.0 - 40.0 * (u * std::f32::consts::PI).cos(),
+                    y: 60.0 - 30.0 * (u * std::f32::consts::PI).sin(),
+                    time: i as f64 * 0.02,
+                    pressure: 1.0,
+                }
+            })
+            .collect(),
+        style: Style::default(),
+    }]
+}
+
+#[test]
+fn eased_retime_keeps_duration_adds_ease_and_is_deterministic() {
+    let length_of = |points: &[StrokePoint]| {
+        points
+            .windows(2)
+            .map(|pair| (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y))
+            .sum::<f32>()
+    };
+    for peak in [1.0_f32, 1.35, 2.2] {
+        let mut points = arc_glyph().remove(0).points;
+        let original = points.clone();
+        let total = length_of(&points);
+        eased_retime(&mut points, 240.0, peak);
+        for (moved, source) in points.iter().zip(&original) {
+            assert_eq!(
+                (moved.x, moved.y),
+                (source.x, source.y),
+                "geometry untouched"
+            );
+            assert_eq!(moved.pressure, source.pressure);
+        }
+        assert!(points.windows(2).all(|pair| pair[0].time <= pair[1].time));
+        let expected = f64::from(total) / 240.0;
+        assert!(
+            (points[points.len() - 1].time - expected).abs() < 1e-9,
+            "peak {peak}: total duration stays path_length / mean_speed"
+        );
+        let mut again = original.clone();
+        eased_retime(&mut again, 240.0, peak);
+        assert_eq!(points, again, "deterministic");
+        if peak > 1.0 {
+            let unit = |from: usize, to: usize| {
+                (points[to].time - points[from].time) / f64::from(length_of(&points[from..=to]))
+            };
+            let first = unit(0, 8);
+            let middle = unit(8, 24);
+            assert!(
+                middle < first,
+                "peak {peak}: the middle third moves faster per unit length"
+            );
+        }
+    }
+    // Degenerate strokes stay untouched.
+    let mut single = vec![StrokePoint {
+        x: 10.0,
+        y: 20.0,
+        time: 5.0,
+        pressure: 1.0,
+    }];
+    eased_retime(&mut single, 240.0, 2.0);
+    assert_eq!(single[0].time, 5.0);
+}
+
+#[test]
+fn learned_speed_peak_changes_motion_without_geometry() {
+    let kind = text_kind("?", 72.0);
+    let mut uniform = Profile::default();
+    let mut fast = Profile::default();
+    for _ in 0..40 {
+        assert!(uniform.observe_stroke(&learning_stroke(8), Style::default()));
+        assert!(fast.observe_stroke(&middle_fast_stroke(), Style::default()));
+    }
+    let metrics = |profile: &Profile| {
+        serde_json::from_str::<serde_json::Value>(&profile.to_json().unwrap()).unwrap()
+            ["profile"]["style"]
+            .clone()
+    };
+    assert!(metrics(&uniform)["speed_peak"].as_f64().unwrap() < 1.1);
+    assert!(metrics(&fast)["speed_peak"].as_f64().unwrap() > 1.6);
+    for key in ["pen_width", "slant", "aspect", "speed", "corner"] {
+        assert_eq!(metrics(&uniform)[key], metrics(&fast)[key], "{key}");
+    }
+    let uniform_kind = uniform
+        .render_adaptive(&kind, "?", |_| Ok(arc_glyph()))
+        .unwrap();
+    let fast_kind = fast
+        .render_adaptive(&kind, "?", |_| Ok(arc_glyph()))
+        .unwrap();
+    let a = strokes(&uniform_kind)[0].clone();
+    let b = strokes(&fast_kind)[0].clone();
+    assert_eq!(a.points.len(), b.points.len());
+    for (moved, source) in b.points.iter().zip(&a.points) {
+        assert_eq!(
+            (moved.x, moved.y),
+            (source.x, source.y),
+            "geometry untouched"
+        );
+    }
+    let middle_ratio = |stroke: &HandwritingStroke| {
+        let segment_length = |from: usize, to: usize| {
+            stroke.points[from..=to]
+                .windows(2)
+                .map(|pair| (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y))
+                .sum::<f32>()
+        };
+        let last = stroke.points.len() - 1;
+        let whole = segment_length(0, last);
+        let at = |target: f32| -> usize {
+            let mut traversed = 0.0;
+            for (index, pair) in stroke.points.windows(2).enumerate() {
+                traversed += (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
+                if traversed >= target {
+                    return index + 1;
+                }
+            }
+            last
+        };
+        let third = whole / 3.0;
+        let one = at(third);
+        let two = at(2.0 * third);
+        let middle = (stroke.points[two].time - stroke.points[one].time).max(1e-9);
+        let total = (stroke.points[last].time - stroke.points[0].time).max(1e-9);
+        (total / 3.0) / middle
+    };
+    assert!(
+        middle_ratio(&b) > middle_ratio(&a) + 0.3,
+        "the learned peak speeds up the middle third relative to uniform learning"
+    );
+    assert_core_valid(uniform_kind);
+    assert_core_valid(fast_kind);
+}
+
+#[test]
+fn v2_profile_files_load_with_default_motion_dimensions() {
+    let mut profile = Profile::default();
+    profile.add_sample('x', sample(24.0)).unwrap();
+    profile.observe_stroke(&learning_stroke(8), Style::default());
+    let value: serde_json::Value = serde_json::from_str(&profile.to_json().unwrap()).unwrap();
+    let mut v2 = value.clone();
+    v2["version"] = 2.into();
+    for field in ["speed_peak", "corner"] {
+        v2["profile"]["style"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        for observation in v2["profile"]["style"]["recent"].as_array_mut().unwrap() {
+            observation.as_object_mut().unwrap().remove(field);
+        }
+    }
+    let loaded = Profile::from_json(&v2.to_string()).unwrap();
+    assert_eq!(loaded.style.motion_peak(), 1.35);
+    assert_eq!(loaded.style.corner(), 0.5);
+    assert_eq!(loaded.learned_strokes(), profile.learned_strokes());
+    let old_metrics = |style: &serde_json::Value| {
+        ["pen_width", "slant", "aspect", "speed"]
+            .iter()
+            .map(|key| style[key].to_string())
+            .collect::<Vec<_>>()
+    };
+    let reloaded: serde_json::Value = serde_json::from_str(&loaded.to_json().unwrap()).unwrap();
+    assert_eq!(
+        old_metrics(&reloaded["profile"]["style"]),
+        old_metrics(&value["profile"]["style"])
+    );
+    assert_eq!(reloaded["version"], 3);
 }
 
 fn fallback_stem() -> Vec<HandwritingStroke> {
@@ -847,7 +1043,14 @@ fn numeric_learning_is_density_independent_bounded_and_robust_to_outliers() {
     };
     let a = metrics(&sparse);
     let b = metrics(&dense);
-    for key in ["pen_width", "slant", "aspect", "speed"] {
+    for key in [
+        "pen_width",
+        "slant",
+        "aspect",
+        "speed",
+        "speed_peak",
+        "corner",
+    ] {
         assert!(
             (a[key].as_f64().unwrap() - b[key].as_f64().unwrap()).abs() < 0.001,
             "{key}"
@@ -908,6 +1111,8 @@ fn learning_normalizes_size_and_caps_each_metric_update() {
     assert!((style["slant"].as_f64().unwrap() + 0.08).abs() <= 0.04001);
     assert!((style["aspect"].as_f64().unwrap() - 0.7).abs() <= 0.08001);
     assert!((style["speed"].as_f64().unwrap() - 240.0).abs() <= 40.00001);
+    assert!((style["speed_peak"].as_f64().unwrap() - 1.35).abs() <= 0.15001);
+    assert!((style["corner"].as_f64().unwrap() - 0.5).abs() <= 0.08001);
     assert!(style["recent"][0].get("points").is_none());
 }
 
@@ -971,7 +1176,7 @@ fn profile_v1_migrates_v2_optional_style_roundtrips_and_validates() {
     let mut profile = Profile::default();
     profile.add_sample('x', sample(24.0)).unwrap();
     let mut value: serde_json::Value = serde_json::from_str(&profile.to_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 2);
+    assert_eq!(value["version"], 3);
     assert!(value["profile"].get("style").is_none());
     value["version"] = 1.into();
     assert_eq!(Profile::from_json(&value.to_string()).unwrap(), profile);
@@ -987,6 +1192,8 @@ fn profile_v1_migrates_v2_optional_style_roundtrips_and_validates() {
         ("slant", serde_json::json!(0.61)),
         ("aspect", serde_json::json!(2)),
         ("speed", serde_json::json!(901)),
+        ("speed_peak", serde_json::json!(2.3)),
+        ("corner", serde_json::json!(-0.1)),
         ("learned_strokes", serde_json::json!(0)),
         ("recent", serde_json::json!([])),
     ] {
