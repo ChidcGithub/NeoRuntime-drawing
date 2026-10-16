@@ -130,7 +130,7 @@ Each successful handwritten answer is **one object**: select, move, or delete it
 
 ## Documentation and validation
 
-- [Changelog: English and Chinese release notes](CHANGELOG.md)
+- [Release notes on the GitHub releases page](https://github.com/ChidcGithub/NeoRuntime-drawing/releases)
 - [Source release procedure and distribution boundaries](RELEASING.md)
 - [Windows application workflow](.github/workflows/windows-app.yml) and [INT8 model workflow](.github/workflows/texteller-int8.yml) (manual; reports only by default)
 - [Drawing guide](drawing/README.md) and [Blackboard guide](blackboard/README.md)

@@ -85,6 +85,6 @@ Local capture uses a built-in Win32 selection overlay and GDI pixel acquisition.
 
 Project-owned code is [Apache-2.0](../LICENSE); third-party dependencies, fonts, runtimes, and models retain their own licenses. See the [distribution requirements](../RELEASING.md).
 
-[Root README](../README.md) · [Release notes](../CHANGELOG.md) · [Drawing](../drawing/README.md)
+[Root README](../README.md) · [Release notes](https://github.com/ChidcGithub/NeoRuntime-drawing/releases) · [Drawing](../drawing/README.md)
 
 The API reference and protocol are maintained in the local-only `api/` directory. Coordinate with the maintainer for host integration documentation.

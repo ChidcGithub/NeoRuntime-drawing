@@ -12,7 +12,7 @@ The main Neo maintainer owns the final package inventory, corresponding-source d
 
 The intended public repository is **ChidcGithub/NeoRuntime-drawing**, with tag **v0.0.1** and GitHub's **pre-release** flag enabled. The repository owner has explicitly authorized this public source prerelease. This document describes the procedure; it is not evidence that a tag, upload, visibility change, or release publication has occurred.
 
-This is the initial prerelease, not an upgrade from a previous published version. Application version 0.0.1 does not change JSON Lines protocol version 1 or document formats v1/v2. Use the bilingual [changelog](CHANGELOG.md) as the release notes and the [README](README.md) as the user entry point.
+This is the initial prerelease, not an upgrade from a previous published version. Application version 0.0.1 does not change JSON Lines protocol version 1 or document formats v1/v2. Write the bilingual release notes in the GitHub release itself (the repository keeps no changelog file after v0.0.2) and keep the [README](README.md) as the user entry point.
 
 ### Distribution boundary
 
@@ -63,7 +63,7 @@ Validation was rerun after removing the legacy local HTTP debug collector:
 - The staged source allowlist and local documentation links were checked before the initial commit. Build caches, model weights, local notes, diagnostics, and user data are excluded, not deleted locally.
 - No GUI or desktop capture was started during validation. Clean-machine, native capture, and real host acceptance remain pending.
 
-The same results and limits are recorded in the [changelog](CHANGELOG.md). Revalidate after subsequent code changes; ignored tests are not passing tests.
+The same results and limits are recorded in the release notes of each tag. Revalidate after subsequent code changes; ignored tests are not passing tests.
 
 Ignored real-model, GPU, and performance tests are separate opt-in checks. Synthetic input and headless tests do not prove native rendering, actual desktop capture, model quality, or real-host integration.
 
@@ -85,7 +85,7 @@ These are maintainer actions, not actions performed by updating this file. They 
 1. Finish the public-content review and fresh validation record. Resolve accidental tracked local files before selecting the release commit; do not silently rewrite history or remove local evidence as part of a release-note edit.
 2. Make the reviewed `ChidcGithub/NeoRuntime-drawing` repository public under the owner's authorization, after checking the exposure of its tree and reachable history.
 3. Create or select tag `v0.0.1` at the reviewed commit. Do not move or overwrite an existing published tag without a separate decision.
-4. Draft a release titled **v0.0.1 — Initial source prerelease**. Use the English and Chinese v0.0.1 notes from `CHANGELOG.md`; retain source-only scope, external host/model requirements, validation provenance, and known limits.
+4. Draft a release titled **v0.0.1 — Initial source prerelease**. Use the English and Chinese v0.0.1 notes published with that release; retain source-only scope, external host/model requirements, validation provenance, and known limits.
 5. Enable **Set as a pre-release**. Do not describe it as stable or production-ready, and do not mark it as the latest stable release.
 6. Leave custom release assets empty. GitHub provides the source ZIP and tar.gz archives; do not upload a locally built executable or a model/runtime package as a convenience asset.
 7. Preview the release notes and check links and archive contents against the tag. Confirm that public-facing documentation does not imply completed native or distribution acceptance.

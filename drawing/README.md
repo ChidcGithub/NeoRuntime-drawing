@@ -62,6 +62,6 @@ Compilation and headless tests do not establish native transparency, passthrough
 
 Project-owned code is [Apache-2.0](../LICENSE); third-party dependencies, fonts, runtimes, and models retain their own licenses. See the [distribution requirements](../RELEASING.md).
 
-[Root README](../README.md) · [Release notes](../CHANGELOG.md)
+[Root README](../README.md) · [Release notes](https://github.com/ChidcGithub/NeoRuntime-drawing/releases)
 
 The API reference and protocol are maintained in the local-only `api/` directory, excluded from current public checkouts. Coordinate with the maintainer for host integration documentation.
