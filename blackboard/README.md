@@ -83,7 +83,7 @@ Local capture uses a built-in Win32 selection overlay and GDI pixel acquisition.
 
 ## License and documentation
 
-Project-owned code is [Apache-2.0](../LICENSE); third-party dependencies, fonts, runtimes, and models retain their own licenses. See the [distribution requirements](../RELEASING.md).
+Project-owned code is [Apache-2.0](../LICENSE); third-party dependencies, fonts, runtimes, and models retain their own licenses. Binary and model distribution remain deferred pending review.
 
 [Root README](../README.md) · [Release notes](https://github.com/ChidcGithub/NeoRuntime-drawing/releases) · [Drawing](../drawing/README.md)
 

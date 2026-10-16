@@ -131,7 +131,6 @@ Each successful handwritten answer is **one object**: select, move, or delete it
 ## Documentation and validation
 
 - [Release notes on the GitHub releases page](https://github.com/ChidcGithub/NeoRuntime-drawing/releases)
-- [Source release procedure and distribution boundaries](RELEASING.md)
 - [Windows application workflow](.github/workflows/windows-app.yml) and [INT8 model workflow](.github/workflows/texteller-int8.yml) (manual; reports only by default)
 - [Drawing guide](drawing/README.md) and [Blackboard guide](blackboard/README.md)
 
@@ -162,7 +161,7 @@ Ignored model, GPU, and performance tests require explicit execution. The v0.0.1
 
 ## License
 
-Project-owned workspace packages are licensed under [Apache-2.0](LICENSE). Third-party dependencies, fonts, runtimes, and models retain their own licenses. This source-only prerelease does not bundle those dependencies and does not certify their redistribution requirements as complete. Binary/model distribution is deferred pending third-party license, attribution, and runtime review. See the [release procedure](RELEASING.md#4-requirements-for-any-future-binary-or-model-distribution) for distribution requirements.
+Project-owned workspace packages are licensed under [Apache-2.0](LICENSE). Third-party dependencies, fonts, runtimes, and models retain their own licenses. This source-only prerelease does not bundle those dependencies and does not certify their redistribution requirements as complete. Binary/model distribution is deferred pending third-party license, attribution, and runtime review.
 
 ## Acknowledgements
 

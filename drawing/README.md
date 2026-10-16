@@ -60,7 +60,7 @@ Committed pages use document-revision render caching; temporary gesture previews
 
 Compilation and headless tests do not establish native transparency, passthrough, touch, or real host-service acceptance. Native GUI and target i5/3 GB performance/memory validation remain pending.
 
-Project-owned code is [Apache-2.0](../LICENSE); third-party dependencies, fonts, runtimes, and models retain their own licenses. See the [distribution requirements](../RELEASING.md).
+Project-owned code is [Apache-2.0](../LICENSE); third-party dependencies, fonts, runtimes, and models retain their own licenses. Binary and model distribution remain deferred pending review.
 
 [Root README](../README.md) · [Release notes](https://github.com/ChidcGithub/NeoRuntime-drawing/releases)
 
