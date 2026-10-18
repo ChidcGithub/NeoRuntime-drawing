@@ -1,6 +1,6 @@
 # Drawing
 
-`neo-drawing` is a transparent, always-on-top desktop annotation tool. **Version 0.0.1 is a source-only prerelease**; binary packaging and cross-platform acceptance testing are not complete.
+`neo-drawing` is a transparent, always-on-top desktop annotation tool. **Version 0.1.0 is a source-only prerelease**; binary packaging and cross-platform acceptance testing are not complete.
 
 ## Build and run
 

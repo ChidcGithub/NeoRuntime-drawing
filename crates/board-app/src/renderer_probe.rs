@@ -42,16 +42,18 @@ pub fn backend_name(backends: wgpu::Backends) -> Option<&'static str> {
 
 /// 依次以子进程探测每个候选：退出码 0 = 成功；非零、崩溃、超时 = 失败并
 /// 尝试下一个。全部失败返回 None。
-pub fn probe_wgpu_backend_via_process(
+pub(crate) fn probe_wgpu_backend_via_process(
     exe: &std::path::Path,
     candidates: &[wgpu::Backends],
     timeout: Duration,
+    logger: &mut crate::board_log::BoardLog,
 ) -> Option<wgpu::Backends> {
     use std::process::{Command, Stdio};
     for &backends in candidates {
         let Some(name) = backend_name(backends) else {
             continue;
         };
+        let started = std::time::Instant::now();
         let spawned = Command::new(exe)
             .arg("--render-probe")
             .arg(name)
@@ -60,31 +62,66 @@ pub fn probe_wgpu_backend_via_process(
             .spawn();
         let mut child = match spawned {
             Ok(child) => child,
-            Err(_) => continue,
+            Err(_) => {
+                logger.warn(
+                    "renderer probe candidate",
+                    &[("backend", name), ("outcome", "spawn failed")],
+                );
+                continue;
+            }
         };
         let deadline = std::time::Instant::now() + timeout;
         let mut success = false;
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    success = status.success();
+                    let outcome = if status.success() {
+                        success = true;
+                        "ok"
+                    } else {
+                        "failed"
+                    };
+                    logger.debug(
+                        "renderer probe candidate",
+                        &[
+                            ("backend", name),
+                            ("outcome", outcome),
+                            ("duration_ms", &started.elapsed().as_millis().to_string()),
+                        ],
+                    );
                     break;
                 }
                 Ok(None) => {
                     if std::time::Instant::now() >= deadline {
                         let _ = child.kill();
                         let _ = child.wait();
+                        logger.warn(
+                            "renderer probe candidate",
+                            &[
+                                ("backend", name),
+                                ("outcome", "timeout"),
+                                ("duration_ms", &started.elapsed().as_millis().to_string()),
+                            ],
+                        );
                         break;
                     }
                     std::thread::sleep(Duration::from_millis(25));
                 }
-                Err(_) => break,
+                Err(_) => {
+                    logger.warn(
+                        "renderer probe candidate",
+                        &[("backend", name), ("outcome", "error")],
+                    );
+                    break;
+                }
             }
         }
         if success {
+            logger.info("renderer probe selected", &[("backend", name)]);
             return Some(backends);
         }
     }
+    logger.warn("renderer probe exhausted", &[]);
     None
 }
 

@@ -1,4 +1,5 @@
 //! 共享桌面应用；默认只显示帮助，绝不隐式启动图形界面。
+mod board_log;
 mod editing;
 mod features;
 mod gui;

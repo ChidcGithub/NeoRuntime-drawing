@@ -2,7 +2,7 @@
 
 Rust desktop tools for classroom writing and screen annotation, with standalone interfaces and a JSON Lines integration layer for a Neo host.
 
-**v0.0.2 is a source-only prerelease**, not a production-ready binary distribution. The release uses GitHub's automatically generated source archives; no executables, model weights, dependency bundles, or runtime packages are attached. Native Windows and real-host acceptance testing are not complete. See the [release notes](CHANGELOG.md) for scope and known limitations.
+**v0.1.0 is a source-only prerelease**, not a production-ready binary distribution. The release uses GitHub's automatically generated source archives; no executables, model weights, dependency bundles, or runtime packages are attached. Native Windows and real-host acceptance testing are not complete. Release notes are published with each tag on the [GitHub releases page](https://github.com/ChidcGithub/NeoRuntime-drawing/releases).
 
 ## Overview
 
@@ -157,7 +157,7 @@ To run the default automated suite from the repository root:
 cargo test --workspace --locked
 ```
 
-Ignored model, GPU, and performance tests require explicit execution. The v0.0.1 and v0.0.2 test/build records in the changelog are historical for their respective tags. Native GUI checks of keyboard/result ordering, previews, handwriting readability, and straight-line 求点, plus target i5/3 GB performance and whole-machine memory measurements, remain pending; neither automated tests nor a successful build establish complete native or distribution acceptance.
+Ignored model, GPU, and performance tests require explicit execution. The v0.0.x and v0.1.0 test/build records are historical for their respective releases. Native GUI checks of keyboard/result ordering, previews, handwriting readability, and straight-line 求点, plus target i5/3 GB performance and whole-machine memory measurements, remain pending; neither automated tests nor a successful build establish complete native or distribution acceptance.
 
 ## License
 

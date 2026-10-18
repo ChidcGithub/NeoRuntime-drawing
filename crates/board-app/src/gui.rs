@@ -662,6 +662,8 @@ struct BoardApp {
     capture_jobs: HashMap<String, CaptureContext>,
     local_capture: Option<capture::LocalCapture>,
     capture_hide_window: bool,
+    logger: crate::board_log::BoardLog,
+    pending_protocol_error: Option<Message>,
     renderer: board_render::PageRenderer,
     export_resources: board_render::RenderResources,
     confirm_close: bool,
@@ -682,6 +684,7 @@ pub fn run(mode: AppMode, hosted: bool) -> Result {
     )?;
     let mut session = Session::new(mode.kind());
     session.attach_window();
+    let mut logger = crate::board_log::BoardLog::new(hosted);
     if hosted {
         // eframe 首次呈现会自动显示根窗口，因此 configure 前根本不创建窗口。
         match crate::hosted_startup::run(
@@ -690,9 +693,29 @@ pub fn run(mode: AppMode, hosted: bool) -> Result {
             &mut std::io::stdout().lock(),
             &crate::recovery_directory(),
         )? {
-            crate::hosted_startup::StartupOutcome::Configured => {}
-            crate::hosted_startup::StartupOutcome::Closed
-            | crate::hosted_startup::StartupOutcome::Disconnected => return Ok(()),
+            crate::hosted_startup::StartupOutcome::Configured => {
+                logger.info("hosted configured", &[]);
+                for message in logger.drain() {
+                    let _ = crate::emit(&message);
+                }
+            }
+            outcome @ (crate::hosted_startup::StartupOutcome::Closed
+            | crate::hosted_startup::StartupOutcome::Disconnected) => {
+                logger.warn(
+                    "hosted startup ended before window",
+                    &[(
+                        "outcome",
+                        match outcome {
+                            crate::hosted_startup::StartupOutcome::Closed => "closed",
+                            _ => "disconnected",
+                        },
+                    )],
+                );
+                for message in logger.drain() {
+                    let _ = crate::emit(&message);
+                }
+                return Ok(());
+            }
         }
     }
     let mut options = eframe::NativeOptions {
@@ -721,6 +744,7 @@ pub fn run(mode: AppMode, hosted: bool) -> Result {
                 &exe,
                 &crate::renderer_probe::candidates(None),
                 crate::renderer_probe::PROBE_TIMEOUT,
+                &mut logger,
             )
         });
         match probe {
@@ -736,6 +760,9 @@ pub fn run(mode: AppMode, hosted: bool) -> Result {
                 eprintln!("[render] wgpu 后端探测全部失败，回退 Glow 渲染器");
                 options.renderer = eframe::Renderer::Glow;
             }
+        }
+        for message in logger.drain() {
+            let _ = crate::emit(&message);
         }
     }
     let options = {
@@ -965,6 +992,8 @@ impl BoardApp {
             capture_jobs: HashMap::new(),
             local_capture: None,
             capture_hide_window: true,
+            logger: crate::board_log::BoardLog::new(hosted),
+            pending_protocol_error: None,
             confirm_close: false,
             allow_close: false,
             controls: Vec::new(),
@@ -1058,6 +1087,13 @@ impl BoardApp {
                         && let Some(id) = result["job_id"].as_str()
                     {
                         self.jobs.push((id.to_owned(), Instant::now()));
+                        let kind = if self.capture_requests.contains_key(&response.id) {
+                            "capture"
+                        } else {
+                            "agent"
+                        };
+                        self.logger
+                            .debug("host job accepted", &[("job_id", id), ("kind", kind)]);
                     }
                     if let Some(capture) = self.capture_requests.remove(&response.id)
                         && response.ok
@@ -1088,6 +1124,32 @@ impl BoardApp {
                 Message::Event(event) if event.event == "job.finished" => {
                     self.jobs
                         .retain(|(id, _)| Some(id.as_str()) != event.data["job_id"].as_str());
+                    let kind = event.data["job_id"]
+                        .as_str()
+                        .map(|id| {
+                            if self.capture_jobs.contains_key(id) {
+                                "capture"
+                            } else {
+                                "agent"
+                            }
+                        })
+                        .unwrap_or("agent");
+                    let (level, outcome) = if event.data["ok"] == true {
+                        (crate::board_log::Level::Info, "ok")
+                    } else if event.data["error"]["code"] == "cancelled" {
+                        (crate::board_log::Level::Info, "cancelled")
+                    } else {
+                        (crate::board_log::Level::Warn, "failed")
+                    };
+                    self.logger.log(
+                        level,
+                        "host job finished",
+                        &[
+                            ("job_id", event.data["job_id"].as_str().unwrap_or("")),
+                            ("kind", kind),
+                            ("outcome", outcome),
+                        ],
+                    );
                     self.status = format!("任务响应：{}", event.data);
                     if let Some(capture) = event.data["job_id"]
                         .as_str()
@@ -1196,9 +1258,11 @@ impl BoardApp {
         self.gesture = None;
         self.cancel_ink();
         self.status = "宿主已断开：可本地保存/退出；未确认停止的截图仍保持隐藏".into();
+        self.logger.warn("host disconnected", &[]);
         match crate::recover_document(&mut self.session, &crate::recovery_directory()) {
             Ok(path) => {
                 if let Some(path) = path {
+                    self.logger.warn("recovery saved", &[]);
                     self.status
                         .push_str(&format!("；恢复包：{}", path.display()));
                 }
@@ -1208,6 +1272,7 @@ impl BoardApp {
                 }
             }
             Err(e) => {
+                self.logger.error("recovery failed", &[]);
                 self.status.push_str(&format!("；恢复失败：{e}"));
                 eprintln!("{}", self.status);
             }
@@ -1236,7 +1301,13 @@ impl BoardApp {
                 }
             }
             Message::Event(event) if event.event == "protocol_error" => {
-                self.messages(vec![event.into()]);
+                // 宿主 transport 收到 protocol_error 会立刻判死连接：断连/恢复的
+                // log 帧先行，protocol_error 在本帧最后发出。
+                self.logger.error(
+                    "transport fatal",
+                    &[("kind", event.data["code"].as_str().unwrap_or("unknown"))],
+                );
+                self.pending_protocol_error = Some(event.into());
                 if self.session.state()["pending_jobs"].as_u64().unwrap_or(0) > 0 {
                     self.disconnected();
                 }
@@ -1306,6 +1377,9 @@ impl BoardApp {
 
     fn unload_model(&mut self) {
         self.cancel_ink();
+        if self.neural_recognizer.is_some() {
+            self.logger.info("model unloaded", &[]);
+        }
         self.expression.clear();
         release_model(
             &mut self.model_loader,
@@ -1325,6 +1399,7 @@ impl BoardApp {
         if self.hwr_backend != HwrBackend::TexTeller || self.model_loader.busy() {
             return;
         }
+        self.logger.info("model load started", &[]);
         self.cancel_ink();
         self.expression.clear();
         if !self.model_load_ready() {
@@ -1580,6 +1655,18 @@ impl BoardApp {
                     self.math_ticket = None;
                     match result {
                         Ok((mut text, object, fallback)) => {
+                            let result_kind = object
+                                .as_ref()
+                                .map(|kind| {
+                                    if matches!(kind, board_core::ObjectKind::Math { .. }) {
+                                        "math"
+                                    } else {
+                                        "text"
+                                    }
+                                })
+                                .unwrap_or("none");
+                            self.logger
+                                .debug("math worker finished", &[("result_kind", result_kind)]);
                             if let Some(kind) = object {
                                 let candidate = self.running_candidate.take();
                                 let insert = |app: &mut Self, kind| {
@@ -1642,6 +1729,28 @@ impl BoardApp {
             self.math_input = None;
         }
         if let Some(result) = self.hwr_worker.take() {
+            let (outcome, candidates) = match result.as_ref() {
+                Ok((_, hwr)) => match hwr.recognition.as_ref() {
+                    Ok(recognition) => ("ok", recognition.candidates.len()),
+                    Err(_) => ("failed", 0),
+                },
+                Err(_) => ("failed", 0),
+            };
+            self.logger.info(
+                "recognition finished",
+                &[
+                    (
+                        "backend",
+                        if self.hwr_backend == HwrBackend::TexTeller {
+                            "texeller"
+                        } else {
+                            "template"
+                        },
+                    ),
+                    ("outcome", outcome),
+                    ("candidates", &candidates.to_string()),
+                ],
+            );
             match result {
                 Ok((request, result))
                     if self.session.effective_visible()
@@ -1706,6 +1815,7 @@ impl BoardApp {
         }
         self.sync_plot_state();
         if let Some(result) = self.plot_worker.take() {
+            self.logger.debug("plot worker finished", &[]);
             match result {
                 Ok((context, object, report))
                     if context == ContextToken::capture(&self.session.document)
@@ -1916,11 +2026,13 @@ impl BoardApp {
         }
         match self.session.save_document(self.path.trim()) {
             Ok(()) => {
+                self.logger.info("document saved", &[]);
                 self.status = "已保存".into();
                 self.changed();
                 true
             }
             Err(e) => {
+                self.logger.warn("document save failed", &[]);
                 self.status = e.message;
                 false
             }
@@ -2893,6 +3005,7 @@ impl BoardApp {
                                     .open_document(self.path.trim(), self.discard_load)
                                 {
                                     Ok(messages) => {
+                                        self.logger.info("document opened", &[]);
                                         self.handwriting.invalidate_context();
                                         self.ink_cache.clear();
                                         self.messages(messages);
@@ -2908,7 +3021,10 @@ impl BoardApp {
                                         self.changed();
                                         self.status = "已载入板书及图片资源".into();
                                     }
-                                    Err(e) => self.status = e.message,
+                                    Err(e) => {
+                                        self.logger.warn("document open failed", &[]);
+                                        self.status = e.message;
+                                    }
                                 }
                             }
                         }
@@ -4741,6 +4857,14 @@ impl eframe::App for BoardApp {
             },
         );
         // #endregion
+        for message in self.logger.drain() {
+            let _ = crate::emit(&message);
+        }
+        // protocol_error 必须是本帧最后一帧：宿主收到即判死连接，
+        // 排在其后的帧不再被消费。
+        if let Some(message) = self.pending_protocol_error.take() {
+            let _ = crate::emit(&message);
+        }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // #region debug-point B:C:frame
