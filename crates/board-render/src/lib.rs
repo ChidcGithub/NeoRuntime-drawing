@@ -1418,7 +1418,7 @@ std::thread_local! {
 struct LineMeshes {
     pixels_per_point: f32,
     options: egui::epaint::TessellationOptions,
-    clip: Rect,
+    lod: i32,
     transform: egui::emath::TSTransform,
     batches: Vec<(usize, usize, std::sync::Arc<egui::Mesh>)>,
 }
@@ -1440,17 +1440,33 @@ impl LineMeshes {
         })
     }
 
-    fn new(painter: &egui::Painter, scene: &Scene) -> Self {
-        Self::transformed(painter, scene, egui::emath::TSTransform::IDENTITY)
+    fn new(painter: &egui::Painter, scene: &Scene, lod_scale: f32) -> Self {
+        Self::transformed_with_lod(
+            painter,
+            scene,
+            egui::emath::TSTransform::IDENTITY,
+            lod_scale,
+        )
     }
     fn transformed(
         painter: &egui::Painter,
         scene: &Scene,
         transform: egui::emath::TSTransform,
     ) -> Self {
+        let lod_scale = painter.ctx().pixels_per_point() * transform.scaling.abs();
+        Self::transformed_with_lod(painter, scene, transform, lod_scale)
+    }
+    /// 几何按 `transform` 域烘焙，细节按 `lod_scale` 选取。网格不含视口裁剪：
+    /// 平移不使缓存失效，可见性由对象/块边界裁剪与 egui 层变换统一处理。
+    fn transformed_with_lod(
+        painter: &egui::Painter,
+        scene: &Scene,
+        transform: egui::emath::TSTransform,
+        lod_scale: f32,
+    ) -> Self {
         let pixels_per_point = painter.ctx().pixels_per_point();
         let options = painter.ctx().tessellation_options(|options| *options);
-        let clip = painter.clip_rect();
+        let clip = Rect::EVERYTHING;
         // 只缓存纯色笔迹/线条，不保存字形图集 UV 或图片纹理 ID。
         // 连续笔迹共享边界，不在每段连接处重复覆盖半透明颜色。
         let mut tessellator =
@@ -1483,7 +1499,14 @@ impl LineMeshes {
                                 if current_clip
                                     .intersects(transform.mul_rect(stroke.bounds).expand(feather))
                                 {
-                                    stroke.mesh(transform, pixels_per_point, feather, &mut mesh);
+                                    // mesh() 的 LOD 以 `参数 × transform.scaling` 选取；
+                                    // 这里直接给目标显示尺度，烘焙域保持不变。
+                                    stroke.mesh(
+                                        transform,
+                                        lod_scale / transform.scaling.abs().max(f32::EPSILON),
+                                        feather,
+                                        &mut mesh,
+                                    );
                                 }
                             }
                             _ => break,
@@ -1500,16 +1523,29 @@ impl LineMeshes {
         Self {
             pixels_per_point,
             options,
-            clip,
+            lod: lod_bucket(lod_scale),
             transform,
             batches,
         }
     }
-    fn matches(&self, painter: &egui::Painter) -> bool {
+    fn matches(&self, painter: &egui::Painter, canvas_lod_scale: f32) -> bool {
+        // LOD 推导与构建一致：恒等烘焙（页面渲染）取画布视图缩放；
+        // 烘焙变换（缩略图）取自身变换缩放（调用方已先行比较 transform）。
+        let lod_scale = if self.transform == egui::emath::TSTransform::IDENTITY {
+            canvas_lod_scale
+        } else {
+            painter.ctx().pixels_per_point() * self.transform.scaling.abs()
+        };
         self.pixels_per_point == painter.ctx().pixels_per_point()
-            && self.clip == painter.clip_rect()
+            && self.lod == lod_bucket(lod_scale)
             && self.options == painter.ctx().tessellation_options(|options| *options)
     }
+}
+
+/// LOD 半倍频程分桶：缩放在桶内不重建网格（仅绘制期变换顶点），跨桶才按新细节重建。
+/// 允许负值：缩小（远离内容）时用更粗的简化档位。
+fn lod_bucket(scale: f32) -> i32 {
+    (scale.max(f32::EPSILON).log2() * 2.0).round() as i32
 }
 
 fn stroke_feather(options: egui::epaint::TessellationOptions, pixels_per_point: f32) -> f32 {
@@ -1535,15 +1571,19 @@ fn paint_scene_with_meshes(
         resources,
         meshes,
         egui::emath::TSTransform::IDENTITY,
+        egui::emath::TSTransform::IDENTITY,
     );
 }
 
+/// `transform`：几何/文字/图片的烘焙变换；`mesh_view`：预烘焙网格的追加变换
+/// （页面渲染传视图，网格同为板面烘焙；缩略图网格已烘焙，传恒等）。
 fn paint_scene_transformed(
     painter: &egui::Painter,
     scene: &Scene,
     resources: &dyn ImageResources,
     meshes: Option<&LineMeshes>,
     transform: egui::emath::TSTransform,
+    mesh_view: egui::emath::TSTransform,
 ) {
     let original_clip = painter.clip_rect();
     let mut painter = painter.clone();
@@ -1562,7 +1602,16 @@ fn paint_scene_transformed(
                     metrics.set(value);
                 });
                 // #endregion
-                painter.add(egui::Shape::Mesh(std::sync::Arc::clone(mesh)));
+                if mesh_view == egui::emath::TSTransform::IDENTITY {
+                    painter.add(egui::Shape::Mesh(std::sync::Arc::clone(mesh)));
+                } else {
+                    // 板面烘焙网格：绘制期做视图变换（仿射顶点，远低于重分格代价）。
+                    let mut transformed = (**mesh).clone();
+                    for vertex in &mut transformed.vertices {
+                        vertex.pos = mesh_view * vertex.pos;
+                    }
+                    painter.add(egui::Shape::Mesh(std::sync::Arc::new(transformed)));
+                }
             }
             let skip = end - start - 1;
             if skip > 0 {
@@ -1694,6 +1743,25 @@ impl PageThumbnail {
         blackboard: bool,
         resources: &dyn ImageResources,
     ) -> Result<()> {
+        self.paint_with_bounds(
+            painter,
+            target,
+            Rect::from_min_size(Pos2::ZERO, canvas_size),
+            blackboard,
+            resources,
+        )
+    }
+
+    /// 按页内容包围盒缩放：`content` 是该页内容的板面包围盒（外边距由调用方负责）。
+    /// 无限画布页面上固定 canvas 范围外（或为负）的内容同样落入预览。
+    pub fn paint_with_bounds(
+        &self,
+        painter: &egui::Painter,
+        target: Rect,
+        content: Rect,
+        blackboard: bool,
+        resources: &dyn ImageResources,
+    ) -> Result<()> {
         let scene = self
             .scene
             .as_ref()
@@ -1705,20 +1773,30 @@ impl PageThumbnail {
                 return Err(RenderError::MissingResource(asset.clone()));
             }
         }
-        let scale =
-            (target.width() / canvas_size.x.max(1.0)).min(target.height() / canvas_size.y.max(1.0));
+        let canvas_size = content.size().max(egui::vec2(1.0, 1.0));
+        let scale = (target.width() / canvas_size.x).min(target.height() / canvas_size.y);
         let rect = Rect::from_center_size(target.center(), canvas_size * scale);
         let painter = painter.with_clip_rect(target.intersect(painter.clip_rect()));
         painter.rect_filled(target, 0.0, background(blackboard));
-        let transform = egui::emath::TSTransform::new(rect.min.to_vec2(), scale);
+        let transform = egui::emath::TSTransform::new(
+            rect.min.to_vec2() - content.min.to_vec2() * scale,
+            scale,
+        );
         let mut meshes = self.meshes.borrow_mut();
-        if !meshes
-            .as_ref()
-            .is_some_and(|meshes| meshes.matches(&painter) && meshes.transform == transform)
-        {
+        if !meshes.as_ref().is_some_and(|meshes| {
+            meshes.matches(&painter, painter.ctx().pixels_per_point())
+                && meshes.transform == transform
+        }) {
             *meshes = Some(LineMeshes::transformed(&painter, scene, transform));
         }
-        paint_scene_transformed(&painter, scene, resources, meshes.as_ref(), transform);
+        paint_scene_transformed(
+            &painter,
+            scene,
+            resources,
+            meshes.as_ref(),
+            transform,
+            egui::emath::TSTransform::IDENTITY,
+        );
         Ok(())
     }
 }
@@ -1795,24 +1873,27 @@ enum PagePaintCommand {
 
 #[derive(Default)]
 struct StrokeChunk {
-    // Arc identities are enough: object meshes are immutable and clip/DPI keyed.
+    // Arc identities are enough: object meshes are immutable and LOD/DPI keyed
+    // (viewport-independent, so panning never invalidates them).
     sources: Vec<Option<std::sync::Arc<egui::Mesh>>>,
     commands: Vec<PagePaintCommand>,
     bytes: usize,
+    /// 成员对象板面边界并集；每次准备重算，用于绘制期整块剔除。
+    bounds: Option<Rect>,
 }
 
 #[derive(Clone, PartialEq)]
 struct PageMeshKey {
     pixels_per_point: f32,
     options: egui::epaint::TessellationOptions,
-    clip: Rect,
+    lod: i32,
 }
 impl PageMeshKey {
-    fn new(painter: &egui::Painter) -> Self {
+    fn new(painter: &egui::Painter, lod_scale: f32) -> Self {
         Self {
             pixels_per_point: painter.ctx().pixels_per_point(),
             options: painter.ctx().tessellation_options(|options| *options),
-            clip: painter.clip_rect(),
+            lod: lod_bucket(lod_scale),
         }
     }
 }
@@ -1828,6 +1909,8 @@ pub struct PageRenderer {
     order: Vec<String>,
     chunks: Vec<StrokeChunk>,
     mesh_key: Option<PageMeshKey>,
+    paint_clip: Option<Rect>,
+    paint_view: Option<egui::emath::TSTransform>,
     batches_dirty: bool,
     visible_objects: u64,
     culled_objects: u64,
@@ -1935,15 +2018,25 @@ impl PageRenderer {
         Ok(())
     }
 
-    fn prepare_meshes(&mut self, painter: &egui::Painter) {
-        self.prepare_meshes_with_budget(painter, MAX_RETAINED_MESH_BYTES);
+    fn prepare_meshes(&mut self, painter: &egui::Painter, view: egui::emath::TSTransform) {
+        self.prepare_meshes_with_budget(painter, view, MAX_RETAINED_MESH_BYTES);
     }
 
-    fn prepare_meshes_with_budget(&mut self, painter: &egui::Painter, budget: usize) {
-        // Key changes clear chunks in paint_cached. Discard obsolete offscreen
-        // meshes too: they must not accumulate as the viewport moves.
+    fn prepare_meshes_with_budget(
+        &mut self,
+        painter: &egui::Painter,
+        view: egui::emath::TSTransform,
+        budget: usize,
+    ) {
+        // Key changes clear chunks in paint_cached. Meshes survive viewport moves
+        // (they are viewport-complete); LOD/DPI/options mismatches rebuild them.
         for entry in self.objects.values_mut() {
-            if entry.meshes.as_ref().is_some_and(|m| !m.matches(painter)) {
+            if entry.meshes.as_ref().is_some_and(|m| {
+                !m.matches(
+                    painter,
+                    painter.ctx().pixels_per_point() * view.scaling.abs(),
+                )
+            }) {
                 entry.meshes = None;
             }
         }
@@ -1968,9 +2061,13 @@ impl PageRenderer {
         );
         self.visible_objects = 0;
         self.culled_objects = 0;
+        let lod_scale = painter.ctx().pixels_per_point() * view.scaling.abs();
         for id in &self.order {
             let entry = self.objects.get_mut(id).unwrap();
-            if !painter.clip_rect().intersects(entry.bounds.expand(feather)) {
+            if !painter
+                .clip_rect()
+                .intersects(view.mul_rect(entry.bounds).expand(feather))
+            {
                 self.culled_objects += 1;
                 #[cfg(test)]
                 RENDER_DEBUG_METRICS.with(|metrics| {
@@ -1984,11 +2081,11 @@ impl PageRenderer {
             if !entry
                 .meshes
                 .as_ref()
-                .is_some_and(|meshes| meshes.matches(painter))
+                .is_some_and(|meshes| meshes.matches(painter, lod_scale))
             {
                 #[cfg(test)]
                 let start = std::time::Instant::now();
-                let meshes = LineMeshes::new(painter, &entry.scene);
+                let meshes = LineMeshes::new(painter, &entry.scene, lod_scale);
                 let bytes = meshes.buffer_bytes();
                 if self
                     .object_mesh_bytes
@@ -2024,17 +2121,13 @@ impl PageRenderer {
         }
     }
 
-    fn prepare_chunks(&mut self, painter: &egui::Painter) {
-        self.prepare_chunks_with_budget(painter, MAX_RETAINED_MESH_BYTES);
+    fn prepare_chunks(&mut self, _painter: &egui::Painter) {
+        self.prepare_chunks_with_budget(_painter, MAX_RETAINED_MESH_BYTES);
     }
 
-    fn prepare_chunks_with_budget(&mut self, painter: &egui::Painter, budget: usize) {
+    fn prepare_chunks_with_budget(&mut self, _painter: &egui::Painter, budget: usize) {
         let aggregate_budget =
             MAX_STROKE_BATCH_BYTES.min(budget.saturating_sub(self.object_mesh_bytes));
-        let feather = stroke_feather(
-            painter.ctx().tessellation_options(|options| *options),
-            painter.ctx().pixels_per_point(),
-        );
         self.chunks
             .truncate(self.order.len().div_ceil(STROKE_BATCH_OBJECTS));
         let mut bytes: usize = self.chunks.iter().map(|chunk| chunk.bytes).sum();
@@ -2045,7 +2138,6 @@ impl PageRenderer {
             let source = |id: &String| {
                 let entry = &self.objects[id];
                 if matches!(entry.source.kind, ObjectKind::Stroke { .. })
-                    && painter.clip_rect().intersects(entry.bounds.expand(feather))
                     && entry
                         .scene
                         .items
@@ -2059,7 +2151,12 @@ impl PageRenderer {
                     None
                 }
             };
+            // 块边界每次准备重算（对象内容可能变化）；成员网格 Arc 不变时跳过重建。
+            let chunk_bounds = ids
+                .iter()
+                .fold(Rect::NOTHING, |acc, id| acc.union(self.objects[id].bounds));
             let chunk = &mut self.chunks[chunk_index];
+            chunk.bounds = Some(chunk_bounds);
             if chunk.sources.len() == ids.len()
                 && ids
                     .iter()
@@ -2142,16 +2239,27 @@ impl PageRenderer {
         }
     }
 
-    fn paint_cached(&mut self, painter: &egui::Painter, resources: &dyn ImageResources) {
-        let key = PageMeshKey::new(painter);
+    fn paint_cached(
+        &mut self,
+        painter: &egui::Painter,
+        resources: &dyn ImageResources,
+        view: egui::emath::TSTransform,
+    ) {
+        let lod_scale = painter.ctx().pixels_per_point() * view.scaling.abs();
+        let key = PageMeshKey::new(painter, lod_scale);
         let key_changed = self.mesh_key.as_ref() != Some(&key);
-        if key_changed || self.batches_dirty {
+        // 视口/视图变化也要重跑准备：平移缩放后新露出的对象需要补建网格。
+        let clip_changed = self.paint_clip != Some(painter.clip_rect());
+        let view_changed = self.paint_view != Some(view);
+        if key_changed || clip_changed || view_changed || self.batches_dirty {
             if key_changed {
                 self.chunks.clear();
             }
-            self.prepare_meshes(painter);
+            self.prepare_meshes(painter, view);
             self.prepare_chunks(painter);
             self.mesh_key = Some(key.clone());
+            self.paint_clip = Some(painter.clip_rect());
+            self.paint_view = Some(view);
             self.batches_dirty = false;
         } else {
             #[cfg(test)]
@@ -2166,10 +2274,26 @@ impl PageRenderer {
         let start = std::time::Instant::now();
         let feather = stroke_feather(key.options, key.pixels_per_point);
         for chunk in &self.chunks {
+            if let Some(bounds) = chunk.bounds
+                && !painter
+                    .clip_rect()
+                    .intersects(view.mul_rect(bounds).expand(feather))
+            {
+                continue;
+            }
             for command in &chunk.commands {
                 match command {
                     PagePaintCommand::Mesh(mesh) => {
-                        painter.add(egui::Shape::Mesh(mesh.clone()));
+                        if view == egui::emath::TSTransform::IDENTITY {
+                            painter.add(egui::Shape::Mesh(mesh.clone()));
+                        } else {
+                            // 板面烘焙网格：绘制期做视图变换（仿射顶点，远低于重分格代价）。
+                            let mut transformed = (**mesh).clone();
+                            for vertex in &mut transformed.vertices {
+                                vertex.pos = view * vertex.pos;
+                            }
+                            painter.add(egui::Shape::Mesh(std::sync::Arc::new(transformed)));
+                        }
                         #[cfg(test)]
                         RENDER_DEBUG_METRICS.with(|metrics| {
                             let mut value = metrics.get();
@@ -2179,12 +2303,18 @@ impl PageRenderer {
                     }
                     PagePaintCommand::Object(index) => {
                         let entry = &self.objects[&self.order[*index]];
-                        if painter.clip_rect().intersects(entry.bounds.expand(feather)) {
-                            paint_scene_with_meshes(
+                        if painter
+                            .clip_rect()
+                            .intersects(view.mul_rect(entry.bounds).expand(feather))
+                        {
+                            // 网格与几何同为板面烘焙：绘制期一起做视图变换。
+                            paint_scene_transformed(
                                 painter,
                                 &entry.scene,
                                 resources,
                                 entry.meshes.as_ref(),
+                                view,
+                                view,
                             );
                         }
                     }
@@ -2207,6 +2337,26 @@ impl PageRenderer {
         version: (&str, u64),
         blackboard: bool,
         resources: &dyn ImageResources,
+    ) -> Result<()> {
+        self.paint_page_at_revision_viewed(
+            painter,
+            page,
+            version,
+            blackboard,
+            resources,
+            egui::emath::TSTransform::IDENTITY,
+        )
+    }
+
+    /// `view`：板面→屏幕的视图变换（无限黑板）；导出等无视图路径为恒等。
+    pub fn paint_page_at_revision_viewed(
+        &mut self,
+        painter: &egui::Painter,
+        page: &Page,
+        version: (&str, u64),
+        blackboard: bool,
+        resources: &dyn ImageResources,
+        view: egui::emath::TSTransform,
     ) -> Result<()> {
         paint_background(painter, blackboard);
         #[cfg(test)]
@@ -2243,7 +2393,7 @@ impl PageRenderer {
             value.scene_update_us += start.elapsed().as_secs_f64() * 1e6;
             metrics.set(value);
         });
-        self.paint_cached(painter, resources);
+        self.paint_cached(painter, resources, view);
         Ok(())
     }
 
@@ -2259,6 +2409,25 @@ impl PageRenderer {
         blackboard: bool,
         resources: &dyn ImageResources,
     ) -> Result<()> {
+        self.paint_page_at_document_revision_viewed(
+            painter,
+            page,
+            version,
+            blackboard,
+            resources,
+            egui::emath::TSTransform::IDENTITY,
+        )
+    }
+
+    pub fn paint_page_at_document_revision_viewed(
+        &mut self,
+        painter: &egui::Painter,
+        page: &Page,
+        version: (&str, u64),
+        blackboard: bool,
+        resources: &dyn ImageResources,
+        view: egui::emath::TSTransform,
+    ) -> Result<()> {
         if self.preview.is_none()
             && self.revision.as_ref().is_some_and(|(doc, id, revision)| {
                 doc == version.0 && id == &page.id && *revision == version.1
@@ -2272,10 +2441,10 @@ impl PageRenderer {
                 value.content_compare_skips += 1;
                 metrics.set(value);
             });
-            self.paint_cached(painter, resources);
+            self.paint_cached(painter, resources, view);
             Ok(())
         } else {
-            self.paint_page_at_revision(painter, page, version, blackboard, resources)
+            self.paint_page_at_revision_viewed(painter, page, version, blackboard, resources, view)
         }
     }
 
@@ -2285,6 +2454,23 @@ impl PageRenderer {
         page: &Page,
         blackboard: bool,
         resources: &dyn ImageResources,
+    ) -> Result<()> {
+        self.paint_page_with_resources_viewed(
+            painter,
+            page,
+            blackboard,
+            resources,
+            egui::emath::TSTransform::IDENTITY,
+        )
+    }
+
+    pub fn paint_page_with_resources_viewed(
+        &mut self,
+        painter: &egui::Painter,
+        page: &Page,
+        blackboard: bool,
+        resources: &dyn ImageResources,
+        view: egui::emath::TSTransform,
     ) -> Result<()> {
         paint_background(painter, blackboard);
         if self.page_id.as_ref() != Some(&page.id) {
@@ -2296,7 +2482,7 @@ impl PageRenderer {
             return Err(error);
         }
         self.preview = Some(());
-        self.paint_cached(painter, resources);
+        self.paint_cached(painter, resources, view);
         Ok(())
     }
 }
@@ -2318,16 +2504,35 @@ fn paint_background(painter: &egui::Painter, blackboard: bool) {
     }
 }
 pub fn paint_object(painter: &egui::Painter, object: &BoardObject) {
-    paint_object_with_resources(painter, object, &NoResources);
+    paint_object_with_resources_viewed(
+        painter,
+        object,
+        &NoResources,
+        egui::emath::TSTransform::IDENTITY,
+    );
 }
 pub fn paint_object_with_resources(
     painter: &egui::Painter,
     object: &BoardObject,
     resources: &dyn ImageResources,
 ) {
+    paint_object_with_resources_viewed(
+        painter,
+        object,
+        resources,
+        egui::emath::TSTransform::IDENTITY,
+    );
+}
+/// `view`：板面→屏幕的视图变换；预览对象与页面内容同域变换。
+pub fn paint_object_with_resources_viewed(
+    painter: &egui::Painter,
+    object: &BoardObject,
+    resources: &dyn ImageResources,
+    view: egui::emath::TSTransform,
+) {
     let mut scene = Scene::default();
     match append_object(&mut scene, object, &mut PlotSamplesCache::default()) {
-        Ok(()) => paint_scene(painter, &scene, resources),
+        Ok(()) => paint_scene_transformed(painter, &scene, resources, None, view, view),
         Err(e) => paint_error(painter, painter.clip_rect().min, &e.to_string()),
     }
 }

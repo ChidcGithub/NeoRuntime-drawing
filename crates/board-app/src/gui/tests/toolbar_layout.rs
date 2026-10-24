@@ -466,10 +466,11 @@ fn collapsed_drawing_keeps_ink_blackboard_only_entry_preserves_history() {
         assert!(app.gesture.is_none() && app.ink_context.is_none());
         assert_eq!(app.session.document, before);
         let commands = &out.viewport_output[&egui::ViewportId::ROOT].commands;
+        // 收起语义（v0.1.1）：黑板直接最小化并进入效率模式，不再收缩窗口。
         assert_eq!(
-            commands.iter().any(
-                |c| matches!(c, ViewportCommand::InnerSize(s) if *s == Vec2::new(220.0, 64.0))
-            ),
+            commands
+                .iter()
+                .any(|c| matches!(c, ViewportCommand::Minimized(true))),
             mode == AppMode::Blackboard
         );
         board_frame(&mut app, &ctx, vec![]);

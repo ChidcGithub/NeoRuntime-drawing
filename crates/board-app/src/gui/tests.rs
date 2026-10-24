@@ -384,3 +384,8 @@ include!("tests/math_workers.rs");
 include!("tests/eraser_rendering.rs");
 
 include!("tests/background_cancellation.rs");
+
+include!("tests/multi_touch.rs");
+include!("tests/canvas_view.rs");
+include!("tests/snap_e2e.rs");
+include!("tests/eraser_line.rs");

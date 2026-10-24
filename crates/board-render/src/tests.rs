@@ -1545,7 +1545,7 @@ fn sharp_duplicate_and_reversing_stroke_geometry_is_bounded() {
 }
 
 #[test]
-fn cached_strokes_match_uncached_triangles_across_dpi_clip_and_alpha() {
+fn cached_strokes_match_uncached_triangles_across_dpi_and_alpha() {
     let mut page = ink_benchmark_page();
     for (i, object) in page.objects.iter_mut().enumerate() {
         if let ObjectKind::Stroke { points, style } = &mut object.kind {
@@ -1596,6 +1596,11 @@ fn cached_strokes_match_uncached_triangles_across_dpi_clip_and_alpha() {
     }
     let context = egui::Context::default();
     let mut renderer = PageRenderer::new();
+    let page_bounds = page
+        .objects
+        .iter()
+        .map(object_bounds)
+        .fold(Rect::NOTHING, Rect::union);
     for dpi in [1.0, 2.0, 1.25] {
         context.set_pixels_per_point(dpi);
         for clip in [
@@ -1633,11 +1638,17 @@ fn cached_strokes_match_uncached_triangles_across_dpi_clip_and_alpha() {
                     draw(false);
                     let expected = draw(false);
                     let actual = draw(true);
-                    assert_eq!(
-                        format!("{actual:?}"),
-                        format!("{expected:?}"),
-                        "dpi={dpi}, clip={clip:?}"
-                    );
+                    if clip.contains_rect(page_bounds) {
+                        assert_eq!(
+                            format!("{actual:?}"),
+                            format!("{expected:?}"),
+                            "dpi={dpi}, clip={clip:?}"
+                        );
+                    } else {
+                        // 视口裁剪网格与软裁剪直绘的三角形集合按设计不同：
+                        // 网格包含裁剪外几何，由 egui 层在渲染期统一裁剪。
+                        assert!(!actual.is_empty(), "dpi={dpi}, clip={clip:?}");
+                    }
                     let mesh = renderer.objects[&page.objects[0].id]
                         .meshes
                         .as_ref()
@@ -3510,7 +3521,7 @@ fn retained_mesh_budget_counts_capacity_and_falls_back_without_lost_geometry() {
             .layer_painter(egui::LayerId::background())
             .with_clip_rect(clip);
         renderer.update_objects(&page).unwrap();
-        renderer.prepare_meshes(&painter);
+        renderer.prepare_meshes(&painter, egui::emath::TSTransform::IDENTITY);
         object_bytes = renderer.object_mesh_bytes;
         assert!(object_bytes > 0);
         renderer.prepare_chunks_with_budget(&painter, object_bytes);
@@ -3534,7 +3545,11 @@ fn retained_mesh_budget_counts_capacity_and_falls_back_without_lost_geometry() {
                 if cached {
                     renderer.clear();
                     renderer.update_objects(&page).unwrap();
-                    renderer.prepare_meshes_with_budget(&painter, budget);
+                    renderer.prepare_meshes_with_budget(
+                        &painter,
+                        egui::emath::TSTransform::IDENTITY,
+                        budget,
+                    );
                     renderer.prepare_chunks_with_budget(&painter, budget);
                     let counted: usize = renderer
                         .objects
@@ -3546,9 +3561,14 @@ fn retained_mesh_budget_counts_capacity_and_falls_back_without_lost_geometry() {
                     assert!(
                         counted + renderer.chunks.iter().map(|c| c.bytes).sum::<usize>() <= budget
                     );
-                    renderer.mesh_key = Some(PageMeshKey::new(&painter));
+                    renderer.mesh_key =
+                        Some(PageMeshKey::new(&painter, painter.ctx().pixels_per_point()));
                     renderer.batches_dirty = false;
-                    renderer.paint_cached(&painter, &NoResources);
+                    renderer.paint_cached(
+                        &painter,
+                        &NoResources,
+                        egui::emath::TSTransform::IDENTITY,
+                    );
                 } else {
                     paint_scene(&painter, &page_scene(&page).unwrap(), &NoResources);
                 }
@@ -3567,7 +3587,7 @@ fn retained_mesh_budget_counts_capacity_and_falls_back_without_lost_geometry() {
 }
 
 #[test]
-fn mesh_budget_releases_stale_chunk_sources_on_edit_delete_and_clip_change() {
+fn mesh_budget_releases_stale_chunk_sources_and_keeps_meshes_across_viewport_moves() {
     let context = egui::Context::default();
     let mut page = ink_benchmark_page();
     let mut renderer = PageRenderer::new();
@@ -3600,6 +3620,7 @@ fn mesh_budget_releases_stale_chunk_sources_on_edit_delete_and_clip_change() {
         page.objects.remove(1);
         renderer.update_objects(&page).unwrap();
         assert!(renderer.chunks.is_empty());
+        // 视口移开不再丢弃网格（平移稳定缓存）：网格保留，总量由预算上限约束。
         let outside = painter.with_clip_rect(Rect::from_min_size(
             egui::pos2(5000.0, 5000.0),
             egui::vec2(100.0, 100.0),
@@ -3607,12 +3628,12 @@ fn mesh_budget_releases_stale_chunk_sources_on_edit_delete_and_clip_change() {
         renderer
             .paint_page_at_document_revision(&outside, &page, ("doc", 2), false, &NoResources)
             .unwrap();
-        assert_eq!(renderer.object_mesh_bytes, 0);
+        assert!(renderer.object_mesh_bytes > 0);
         assert!(
             renderer
                 .objects
                 .values()
-                .all(|entry| entry.meshes.is_none())
+                .all(|entry| entry.meshes.is_some())
         );
     });
     output.textures_delta.clear();
@@ -3693,7 +3714,11 @@ fn thumbnail_mesh_cache_reuses_and_invalidates_transform_clip_dpi_and_options() 
                 .2
                 .clone();
             if let Some(previous) = &previous {
-                assert_eq!(std::sync::Arc::ptr_eq(previous, &mesh), step == 1);
+                // 网格含完整几何：视口（clip）变化复用缓存；目标/画布/DPI/选项变化重建。
+                assert_eq!(
+                    std::sync::Arc::ptr_eq(previous, &mesh),
+                    matches!(step, 1 | 3)
+                );
             }
             previous = Some(mesh);
         });
@@ -3735,4 +3760,216 @@ fn cached_page_invalidates_on_edits_and_circle_bounds_stay_round() {
     output.textures_delta.clear();
     renderer.clear();
     assert!(renderer.objects.is_empty());
+}
+
+#[test]
+fn lod_bucket_is_stable_within_half_octaves() {
+    assert!(lod_bucket(0.0) < -40); // 退化尺度钳到最深负桶
+    assert_eq!(lod_bucket(0.1), -7);
+    assert_eq!(lod_bucket(0.5), -2);
+    assert_eq!(lod_bucket(1.0), 0);
+    // 桶内缩放不换桶（半倍频程 ≈ ×1.41 才换）。
+    assert_eq!(lod_bucket(0.9), 0);
+    assert_ne!(lod_bucket(1.5), lod_bucket(1.0));
+    assert!(lod_bucket(5.0) > lod_bucket(2.0));
+}
+
+fn view_test_page() -> Page {
+    Page {
+        id: "p".into(),
+        objects: vec![BoardObject {
+            id: "far".into(),
+            kind: ObjectKind::Stroke {
+                points: (0..40)
+                    .map(|i| StrokePoint {
+                        x: 4980.0 + i as f32 * 2.0,
+                        y: (i as f32 * 0.7).sin() * 10.0,
+                        time: i as f64 * 0.01,
+                        pressure: 1.0,
+                    })
+                    .collect(),
+                style: Default::default(),
+            },
+        }],
+    }
+}
+
+#[test]
+fn zoomed_out_view_keeps_offscreen_board_objects_visible() {
+    let context = egui::Context::default();
+    let mut renderer = PageRenderer::new();
+    // 恒等视图：板面 x≈5000 远超 800 视口 → 剔除。
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        let painter = ui
+            .painter()
+            .with_clip_rect(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        renderer
+            .paint_page_at_document_revision(
+                &painter,
+                &view_test_page(),
+                ("doc", 1),
+                false,
+                &NoResources,
+            )
+            .unwrap();
+        assert_eq!(renderer.visible_objects, 0);
+        assert_eq!(renderer.culled_objects, 1);
+    });
+    output.textures_delta.clear();
+    // 缩放 10%：板面 5000 处映射到屏幕 500 → 可见（剔除按视图变换后的边界算）。
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        let painter = ui
+            .painter()
+            .with_clip_rect(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        renderer
+            .paint_page_at_document_revision_viewed(
+                &painter,
+                &view_test_page(),
+                ("doc", 1),
+                false,
+                &NoResources,
+                egui::emath::TSTransform {
+                    scaling: 0.1,
+                    translation: egui::Vec2::ZERO,
+                },
+            )
+            .unwrap();
+        assert_eq!(renderer.visible_objects, 1);
+        assert_eq!(renderer.culled_objects, 0);
+    });
+    output.textures_delta.clear();
+}
+
+#[test]
+fn panning_does_not_rebuild_meshes() {
+    let context = egui::Context::default();
+    let mut renderer = PageRenderer::new();
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        // 缩放 50%（桶 -2）：屏幕 (400,300) 下是板面 (4980..5060, 45..115)。
+        let painter = ui
+            .painter()
+            .with_clip_rect(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        renderer
+            .paint_page_at_document_revision_viewed(
+                &painter,
+                &view_test_page(),
+                ("doc", 1),
+                false,
+                &NoResources,
+                egui::emath::TSTransform {
+                    scaling: 0.5,
+                    translation: egui::vec2(-2090.0, 260.0),
+                },
+            )
+            .unwrap();
+        assert_eq!(renderer.visible_objects, 1);
+    });
+    output.textures_delta.clear();
+    RENDER_DEBUG_METRICS.with(|metrics| {
+        let mut value = metrics.get();
+        value.mesh_misses = 0;
+        value.mesh_hits = 0;
+        metrics.set(value);
+    });
+    // 纯平移（屏幕移动 40px，同桶）：网格命中，零重建。
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        let painter = ui
+            .painter()
+            .with_clip_rect(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0)));
+        renderer
+            .paint_page_at_document_revision_viewed(
+                &painter,
+                &view_test_page(),
+                ("doc", 1),
+                false,
+                &NoResources,
+                egui::emath::TSTransform {
+                    scaling: 0.5,
+                    translation: egui::vec2(-2050.0, 260.0),
+                },
+            )
+            .unwrap();
+    });
+    output.textures_delta.clear();
+    RENDER_DEBUG_METRICS.with(|metrics| {
+        let value = metrics.get();
+        assert_eq!(value.mesh_misses, 0, "纯平移不得重建网格");
+        assert!(value.mesh_hits >= 1, "平移帧应命中既有网格");
+    });
+}
+
+#[test]
+fn thumbnail_paint_with_bounds_maps_far_from_origin_content_into_target() {
+    // 内容远离原点：固定 canvas 缩放永远不会把 (2000,500) 画进 120x120 预览。
+    let page = page(shape(
+        ShapeKind::Line,
+        vec![p(2000.0, 500.0), p(2100.0, 600.0)],
+    ));
+    let thumbnail = PageThumbnail::new(&page, ("doc", 1));
+    let ctx = egui::Context::default();
+    let target = Rect::from_min_size(Pos2::ZERO, egui::vec2(120.0, 120.0));
+    // 边距由调用方负责：这里取该页内容在板面上的紧致包围盒。
+    let content = object_bounds(&page.objects[0]);
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        thumbnail
+            .paint_with_bounds(ui.painter(), target, content, false, &NoResources)
+            .unwrap();
+    });
+    output.textures_delta.clear();
+    assert!(!output.shapes.is_empty());
+    for s in &output.shapes {
+        assert!(
+            s.clip_rect.intersects(target),
+            "clip_rect {:?} 必须与 target 相交",
+            s.clip_rect
+        );
+    }
+    // 线段经 content 变换后的顶点范围必须落入 target 内（羽化只允许亚像素外扩）。
+    let mut drawn = Rect::NOTHING;
+    for s in &output.shapes {
+        if let egui::Shape::Mesh(mesh) = &s.shape {
+            for vertex in &mesh.vertices {
+                drawn.extend_with(vertex.pos);
+            }
+        }
+    }
+    assert!(drawn.is_positive(), "线段应产生网格顶点");
+    assert!(drawn.intersects(target));
+    assert!(
+        target.expand(1.0).contains_rect(drawn),
+        "内容顶点范围 {drawn:?} 应落在 target 内"
+    );
+    assert!(
+        drawn.width() > 100.0,
+        "内容应实际铺满 target，而不是只擦到边角"
+    );
+}
+
+#[test]
+fn thumbnail_paint_with_bounds_tiny_content_keeps_finite_scale() {
+    let page = page(shape(
+        ShapeKind::Line,
+        vec![p(500.0, 500.0), p(505.0, 505.0)],
+    ));
+    let thumbnail = PageThumbnail::new(&page, ("doc", 1));
+    let ctx = egui::Context::default();
+    let target = Rect::from_min_size(Pos2::ZERO, egui::vec2(120.0, 120.0));
+    let content = Rect::from_min_size(egui::pos2(500.0, 500.0), egui::vec2(10.0, 10.0));
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        thumbnail
+            .paint_with_bounds(ui.painter(), target, content, false, &NoResources)
+            .unwrap();
+        let meshes = thumbnail.meshes.borrow();
+        let meshes = meshes.as_ref().expect("成功绘制后应建立网格缓存");
+        assert!(meshes.transform.scaling.is_finite());
+        assert!(meshes.transform.scaling > 0.0);
+        assert_eq!(
+            meshes.transform.scaling, 12.0,
+            "10x10 内容放进 120x120 应放大 12 倍"
+        );
+    });
+    output.textures_delta.clear();
+    for s in &output.shapes {
+        assert!(s.clip_rect.intersects(target));
+    }
 }

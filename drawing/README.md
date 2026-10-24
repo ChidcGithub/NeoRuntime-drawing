@@ -1,6 +1,6 @@
 # Drawing
 
-`neo-drawing` is a transparent, always-on-top desktop annotation tool. **Version 0.1.0 is a source-only prerelease**; binary packaging and cross-platform acceptance testing are not complete.
+`neo-drawing` is a transparent, always-on-top desktop annotation tool. **Version 0.1.7**; binary packaging and cross-platform acceptance testing are not complete.
 
 ## Build and run
 
@@ -20,15 +20,18 @@ cargo build --release -p neo-drawing --locked
 - The toolbar provides pens, color/width/dash settings, erasing, selection, lines, shapes, undo/redo, and page controls. Secondary controls move into More on narrow windows.
 - Click the toolbar pen or eraser once to select it, then again to open settings; no rapid double-click is needed. Other menus open with one click.
 - Clear all in the eraser menu removes every object and connection on the current page as one undo step. Other pages are unchanged.
-- Select the line tool and drag to draw. Erasing previews during a drag and commits on release as one undo step.
+- Select the line tool and drag to draw. Erasing previews during a drag and commits on release as one undo step. Endpoint snapping tolerance decays exponentially while a drag lasts (from 12 px toward 2 px); a drawn line passing near the crossing of two shape segments snaps to pass through their intersection.
 - Selection supports moving objects, editing shape vertices, and resizing circles/ellipses. Line endpoints can attach to shape vertices or edges and follow their targets.
+- Infinite canvas: every page pans and zooms from 10% to 500%. `Ctrl+Wheel` zooms around the pointer; plain wheel and middle-drag pan. In selection mode, dragging empty space pans (with light inertia on release) and a two-finger pinch zooms/pans with the anchor pinned under the fingers. Each page remembers its own view across page switches; the view never enters saved documents or exports. While zooming, the current percentage fades in above the bottom toolbar and fades out one second after zooming stops.
+- On touch screens, multi-finger writing is supported with the pen tool: all fingers write simultaneously through the touch pipeline (up to five concurrent strokes, each committing independently; palm rejection is not performed — keep palms off the surface). Touches never trigger zoom or pan while writing.
+- Five-finger gestures work in every tool: swipe down to minimize, swipe left/right to flip pages. A center-screen icon grows with the swipe and pops at the threshold; moving the hand back cancels. Toggle and trigger distance live in settings.
 - Select a screenshot/image or function plot, then drag its blue corner handles to resize. Images preserve their aspect ratio; plot frames resize independently on each axis without changing expressions or coordinate ranges. The opposite corner stays fixed; each drag is one undo step. While an image is selected, click its interior to open Agent authorization; its corner handles take priority over the image button.
 - Documents support up to 500 pages. Use `Ctrl+S` to save, `Ctrl+Z` to undo, and `Ctrl+Y` to redo.
 
 ## Collapse and pointer passthrough
 
 - Collapsing Drawing hides only its toolbar and panels. Ink remains visible; the native window is neither hidden nor resized. Expand restores the toolbar; Exit is separate.
-- Blackboard instead collapses to a 220 x 64 logical-pixel expand/exit window. Both retain the document and undo history; neither collapse action confirms all windows are hidden for capture.
+- Blackboard instead minimizes directly on collapse and enters Windows efficiency mode (EcoQoS); restoring from the taskbar expands it again. Both retain the document and undo history; neither collapse action confirms all windows are hidden for capture.
 - Windows pointer passthrough preserves visible ink and restores pointer interaction near the toolbar. Equivalent behavior is not guaranteed on other platforms.
 
 ## Save, open, and export

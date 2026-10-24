@@ -210,9 +210,8 @@ fn native_entry_close_restores_geometry_and_does_not_discard_dirty_document() {
         if dirty {
             assert!(app.confirm_close && !app.allow_close);
             assert!(commands.contains(&ViewportCommand::CancelClose));
-            assert!(commands.contains(&ViewportCommand::InnerSize(Vec2::new(900.0, 600.0))));
-            assert!(commands.contains(&ViewportCommand::OuterPosition(Pos2::new(40.0, 50.0))));
-            assert!(commands.contains(&ViewportCommand::Maximized(true)));
+            // 展开恢复 = 回到默认全屏（v0.1.1 收起改为最小化，不再保存几何）。
+            assert!(commands.contains(&ViewportCommand::Fullscreen(true)));
         } else {
             assert!(app.allow_close);
             assert!(commands.contains(&ViewportCommand::Close));

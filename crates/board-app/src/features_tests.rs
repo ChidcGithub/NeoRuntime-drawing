@@ -708,12 +708,95 @@ fn snaps_to_segment_and_skips_self() {
         objects: vec![line],
     };
     assert_eq!(
-        snap_endpoint(&page, Point { x: 50.0, y: 5.0 }, None),
+        snap_endpoint_with_radius(&page, Point { x: 50.0, y: 5.0 }, None, SNAP_RADIUS_MAX),
         Point { x: 50.0, y: 0.0 }
     );
     assert_eq!(
-        snap_endpoint(&page, Point { x: 50.0, y: 5.0 }, Some("line")),
+        snap_endpoint_with_radius(
+            &page,
+            Point { x: 50.0, y: 5.0 },
+            Some("line"),
+            SNAP_RADIUS_MAX
+        ),
         Point { x: 50.0, y: 5.0 }
+    );
+}
+
+#[test]
+fn drag_snap_radius_decays_exponentially_to_floor() {
+    assert!((drag_snap_radius(0.0) - SNAP_RADIUS_MAX).abs() < 1e-5);
+    // τ=2s：两秒后衰减到 12/e ≈ 4.42。
+    assert!((drag_snap_radius(2.0) - SNAP_RADIUS_MAX / std::f32::consts::E).abs() < 1e-5);
+    assert_eq!(drag_snap_radius(60.0), SNAP_RADIUS_MIN);
+    assert_eq!(drag_snap_radius(-1.0), SNAP_RADIUS_MAX); // 负时长按 0 处理
+}
+
+#[test]
+fn snaps_to_line_intersections_over_edges_but_not_over_endpoints() {
+    let line = |id: &str, a: Point, b: Point| BoardObject {
+        id: id.into(),
+        kind: ObjectKind::Shape {
+            shape: board_core::ShapeKind::Line,
+            points: vec![a, b],
+            style: Default::default(),
+        },
+    };
+    let page = Page {
+        id: "p".into(),
+        objects: vec![
+            line("a", Point { x: 0.0, y: 0.0 }, Point { x: 100.0, y: 0.0 }),
+            line("b", Point { x: 50.0, y: -40.0 }, Point { x: 50.0, y: 40.0 }),
+        ],
+    };
+    // 交点压过边候选：交点 (50,0) 落在线 a 上，边投影 (52,0) 恒比它近，分级后才选得中。
+    assert_eq!(
+        snap_endpoint_with_radius(&page, Point { x: 52.0, y: 4.0 }, None, 12.0),
+        Point { x: 50.0, y: 0.0 }
+    );
+    // 端点优先于交点：靠近线 b 端点 (50,40) 时吸端点。
+    assert_eq!(
+        snap_endpoint_with_radius(&page, Point { x: 52.0, y: 38.0 }, None, 12.0),
+        Point { x: 50.0, y: 40.0 }
+    );
+    // 排除其中一条线后交点消失，回退到另一条线的边吸附。
+    assert_eq!(
+        snap_endpoint_with_radius(&page, Point { x: 52.0, y: 4.0 }, Some("b"), 12.0),
+        Point { x: 52.0, y: 0.0 }
+    );
+    // 半径外不吸附。
+    assert_eq!(
+        snap_endpoint_with_radius(&page, Point { x: 200.0, y: 60.0 }, None, 3.0),
+        Point { x: 200.0, y: 60.0 }
+    );
+}
+
+#[test]
+fn intersections_include_expanded_shape_edges() {
+    let page = Page {
+        id: "p".into(),
+        objects: vec![
+            BoardObject {
+                id: "rect".into(),
+                kind: ObjectKind::Shape {
+                    shape: board_core::ShapeKind::Rectangle,
+                    points: vec![Point { x: 40.0, y: -30.0 }, Point { x: 60.0, y: 30.0 }],
+                    style: Default::default(),
+                },
+            },
+            BoardObject {
+                id: "b".into(),
+                kind: ObjectKind::Shape {
+                    shape: board_core::ShapeKind::Line,
+                    points: vec![Point { x: 50.0, y: -40.0 }, Point { x: 50.0, y: 40.0 }],
+                    style: Default::default(),
+                },
+            },
+        ],
+    };
+    // 竖线穿矩形边（两点存储展开后的顶边）于 (50,-30)：交点候选压过更近的边投影 (51,-30)。
+    assert_eq!(
+        snap_endpoint_with_radius(&page, Point { x: 51.0, y: -28.0 }, None, 6.0),
+        Point { x: 50.0, y: -30.0 }
     );
 }
 
@@ -827,4 +910,73 @@ fn place_answer_centers_right_side_matches_width_and_places_below_for_equations(
     };
     assert_eq!(position.x, source.left());
     assert_eq!(position.y, source.bottom() + gap);
+}
+
+#[test]
+fn snaps_drawn_segment_through_line_intersections() {
+    let line = |id: &str, a: Point, b: Point| BoardObject {
+        id: id.into(),
+        kind: ObjectKind::Shape {
+            shape: board_core::ShapeKind::Line,
+            points: vec![a, b],
+            style: Default::default(),
+        },
+    };
+    let page = Page {
+        id: "p".into(),
+        objects: vec![
+            line("a", Point { x: 0.0, y: 0.0 }, Point { x: 100.0, y: 0.0 }),
+            line("b", Point { x: 50.0, y: -40.0 }, Point { x: 50.0, y: 40.0 }),
+        ],
+    };
+    // 画线 (0,0)->(52,4)：线身距交点 (50,0) 约 3.85px -> 吸附为经过交点，线长保持。
+    let end = snap_segment_through_intersections(
+        &page,
+        Point { x: 0.0, y: 0.0 },
+        Point { x: 52.0, y: 4.0 },
+        None,
+        12.0,
+    )
+    .expect("线身经过交点应吸附");
+    // 线经过 (50,0)：在 end.x 处的参数 t=50/end.x，对应 y 应为 0。
+    let t = 50.0 / end.x;
+    let y_at = t * end.y;
+    assert!(y_at.abs() < 0.5, "线应经过交点 (50,0)：y(50)={y_at}");
+    // 线长保持不变。
+    let length_before = 52.0f32.hypot(4.0);
+    let length_after = end.x.hypot(end.y);
+    assert!((length_after - length_before).abs() < 1e-3);
+    // 线身远离交点 -> None。
+    assert!(
+        snap_segment_through_intersections(
+            &page,
+            Point { x: 0.0, y: 200.0 },
+            Point { x: 52.0, y: 204.0 },
+            None,
+            12.0,
+        )
+        .is_none()
+    );
+    // 交点在线段之外（t<0）-> None。
+    assert!(
+        snap_segment_through_intersections(
+            &page,
+            Point { x: 60.0, y: 0.0 },
+            Point { x: 110.0, y: 4.0 },
+            None,
+            12.0,
+        )
+        .is_none()
+    );
+    // 排除其中一条线后无交点 -> None。
+    assert!(
+        snap_segment_through_intersections(
+            &page,
+            Point { x: 0.0, y: 0.0 },
+            Point { x: 52.0, y: 4.0 },
+            Some("b"),
+            12.0,
+        )
+        .is_none()
+    );
 }

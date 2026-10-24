@@ -466,11 +466,41 @@ pub struct ConnectionHit {
     distance: f32,
 }
 
+/// 吸附容差随拖动时长指数衰减：`R(t) = R_MAX·e^(−t/τ)`，下限 `R_MIN`（教师反馈：
+/// 拖得越久越不易误吸附；起笔瞬间最灵敏）。
+pub const SNAP_RADIUS_MAX: f32 = 12.0;
+pub const SNAP_RADIUS_MIN: f32 = 2.0;
+pub const SNAP_DECAY_TAU_SECS: f32 = 2.0;
+
+pub fn drag_snap_radius(elapsed_secs: f32) -> f32 {
+    (SNAP_RADIUS_MAX * (-elapsed_secs.max(0.0) / SNAP_DECAY_TAU_SECS).exp()).max(SNAP_RADIUS_MIN)
+}
+
 pub fn connection_hit(page: &Page, query: Point, excluded: Option<&str>) -> Option<ConnectionHit> {
-    connection_hits(page, query, excluded).into_iter().next()
+    connection_hit_with_radius(page, query, excluded, SNAP_RADIUS_MAX)
+}
+
+pub fn connection_hit_with_radius(
+    page: &Page,
+    query: Point,
+    excluded: Option<&str>,
+    radius: f32,
+) -> Option<ConnectionHit> {
+    connection_hits_with_radius(page, query, excluded, radius)
+        .into_iter()
+        .next()
 }
 
 pub fn connection_hits(page: &Page, query: Point, excluded: Option<&str>) -> Vec<ConnectionHit> {
+    connection_hits_with_radius(page, query, excluded, SNAP_RADIUS_MAX)
+}
+
+pub fn connection_hits_with_radius(
+    page: &Page,
+    query: Point,
+    excluded: Option<&str>,
+    radius: f32,
+) -> Vec<ConnectionHit> {
     let mut hits = Vec::new();
     for object in &page.objects {
         if Some(object.id.as_str()) == excluded {
@@ -483,7 +513,7 @@ pub fn connection_hits(page: &Page, query: Point, excluded: Option<&str>) -> Vec
             let mut endpoint_hit = false;
             for (index, &point) in points.iter().enumerate() {
                 let distance = (point.x - query.x).hypot(point.y - query.y);
-                if distance <= 12.0 {
+                if distance <= radius {
                     hits.push(ConnectionHit {
                         object: object.clone(),
                         anchor: board_core::Anchor::Vertex { index },
@@ -518,7 +548,7 @@ pub fn connection_hits(page: &Page, query: Point, excluded: Option<&str>) -> Vec
             })
         };
         if let Some(geometry) = geometry
-            && let Ok(Some(hit)) = board_ink::nearest_connection(&geometry, query, 12.0, None)
+            && let Ok(Some(hit)) = board_ink::nearest_connection(&geometry, query, radius, None)
         {
             let anchor = match hit.site {
                 board_ink::ConnectionSite::Vertex(index) => board_core::Anchor::Vertex { index },
@@ -561,8 +591,191 @@ pub fn connection_hits(page: &Page, query: Point, excluded: Option<&str>) -> Vec
     hits
 }
 
-pub fn snap_endpoint(page: &Page, query: Point, excluded: Option<&str>) -> Point {
-    connection_hit(page, query, excluded).map_or(query, |hit| hit.point)
+/// 端点/几何吸附 + 线段交点吸附（教师反馈），分级优先：**顶点/端点 > 线段交点 > 线段边**。
+/// 交点必须压过边候选才有意义——交点总落在某条线段上，纯距离排序永远选不中它。
+pub fn snap_endpoint_with_radius(
+    page: &Page,
+    query: Point,
+    excluded: Option<&str>,
+    radius: f32,
+) -> Point {
+    let hits = connection_hits_with_radius(page, query, excluded, radius);
+    let nearest = |filter: &dyn Fn(&ConnectionHit) -> bool| {
+        hits.iter()
+            .filter(|hit| filter(hit))
+            .min_by(|a, b| a.distance.total_cmp(&b.distance))
+            .map(|hit| hit.point)
+    };
+    if let Some(point) = nearest(&|hit| matches!(hit.anchor, board_core::Anchor::Vertex { .. })) {
+        return point;
+    }
+    if let Some(point) = segment_intersections_near(page, query, radius, excluded)
+        .into_iter()
+        .min_by(|a, b| {
+            let da = (a.x - query.x).hypot(a.y - query.y);
+            let db = (b.x - query.x).hypot(b.y - query.y);
+            da.total_cmp(&db)
+        })
+    {
+        return point;
+    }
+    nearest(&|hit| matches!(hit.anchor, board_core::Anchor::Edge { .. })).unwrap_or(query)
+}
+
+/// 查询点半径内的线段交点候选：页面上形状线段两两求交（不含被排除对象；笔画不参与）。
+pub fn segment_intersections_near(
+    page: &Page,
+    query: Point,
+    radius: f32,
+    excluded: Option<&str>,
+) -> Vec<Point> {
+    let segments = page_shape_segments(page, excluded);
+    let mut points: Vec<Point> = Vec::new();
+    for (index, &segment) in segments.iter().enumerate() {
+        if !segment_near(segment, query, radius) {
+            continue;
+        }
+        for &other in &segments[index + 1..] {
+            if !segment_near(other, query, radius) {
+                continue;
+            }
+            if let Some(point) = segment_intersection(segment, other)
+                && (point.x - query.x).hypot(point.y - query.y) <= radius
+                && !points.contains(&point)
+            {
+                points.push(point);
+            }
+        }
+    }
+    points
+}
+
+/// 页面上形状对象的线段集合（与 `connection_hits` 同一套展开规则；Line 两点/多边形边/环回退）。
+fn page_shape_segments(page: &Page, excluded: Option<&str>) -> Vec<(Point, Point)> {
+    let mut segments = Vec::new();
+    for object in &page.objects {
+        if Some(object.id.as_str()) == excluded {
+            continue;
+        }
+        let ObjectKind::Shape { shape, points, .. } = &object.kind else {
+            continue;
+        };
+        let geometry = if points.len() == 2 {
+            board_ink::shape_geometry(*shape, points[0], points[1]).ok()
+        } else {
+            let edges =
+                board_ink::shape_geometry(*shape, Point::default(), Point { x: 100.0, y: 100.0 })
+                    .ok()
+                    .filter(|geometry| geometry.vertices.len() == points.len())
+                    .map(|geometry| geometry.edges)
+                    .unwrap_or_else(|| {
+                        (0..points.len())
+                            .map(|index| [index, (index + 1) % points.len()])
+                            .collect()
+                    });
+            Some(board_ink::ShapeGeometry {
+                kind: *shape,
+                vertices: points.clone(),
+                edges,
+            })
+        };
+        let Some(geometry) = geometry else { continue };
+        for edge in geometry.edges {
+            segments.push((geometry.vertices[edge[0]], geometry.vertices[edge[1]]));
+        }
+    }
+    segments
+}
+
+fn segment_near(segment: (Point, Point), query: Point, radius: f32) -> bool {
+    let (a, b) = segment;
+    query.x >= a.x.min(b.x) - radius
+        && query.x <= a.x.max(b.x) + radius
+        && query.y >= a.y.min(b.y) - radius
+        && query.y <= a.y.max(b.y) + radius
+}
+
+fn segment_intersection(a: (Point, Point), b: (Point, Point)) -> Option<Point> {
+    let r = (a.1.x - a.0.x, a.1.y - a.0.y);
+    let s = (b.1.x - b.0.x, b.1.y - b.0.y);
+    let denominator = r.0 * s.1 - r.1 * s.0;
+    if denominator.abs() < 1e-9 {
+        return None; // 平行或共线：交点不稳定，交给端点吸附。
+    }
+    let offset = (b.0.x - a.0.x, b.0.y - a.0.y);
+    let t = (offset.0 * s.1 - offset.1 * s.0) / denominator;
+    let u = (offset.0 * r.1 - offset.1 * r.0) / denominator;
+    if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+        Some(Point {
+            x: a.0.x + t * r.0,
+            y: a.0.y + t * r.1,
+        })
+    } else {
+        None
+    }
+}
+
+/// 画线时的“线身穿交点”吸附（教师场景：新画的线段要精确穿过已有线段的交点，
+/// 而非把端点吸到交点上）：若某交点到线身（start→end）的垂距 ≤ radius 且垂足
+/// 在线段上，则把 end 绕 start 旋转到交点方向（保持线长），使线段恰好经过交点。
+/// 返回调整后的 end；无候选时返回 None。交点候选 = 页面形状线段的两两交点
+///（不含被排除对象自身）。
+pub fn snap_segment_through_intersections(
+    page: &Page,
+    start: Point,
+    end: Point,
+    excluded: Option<&str>,
+    radius: f32,
+) -> Option<Point> {
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    let length_squared = dx * dx + dy * dy;
+    if length_squared < 1e-6 {
+        return None;
+    }
+    let segments = page_shape_segments(page, excluded);
+    let mut best: Option<(f32, Point)> = None;
+    for (index, &a) in segments.iter().enumerate() {
+        for &b in &segments[index + 1..] {
+            let Some(point) = segment_intersection(a, b) else {
+                continue;
+            };
+            // 垂足参数 t：交点在线段上的投影位置，要求落在线段上（末端允许
+            // 少量超出，画过交点一点点也会被拉回）。
+            let t = ((point.x - start.x) * dx + (point.y - start.y) * dy) / length_squared;
+            if !(-0.02..=1.05).contains(&t) {
+                continue;
+            }
+            let foot = Point {
+                x: start.x + t * dx,
+                y: start.y + t * dy,
+            };
+            let distance = (point.x - foot.x).hypot(point.y - foot.y);
+            if distance > radius {
+                continue;
+            }
+            // 保持线长、方向对准交点：end' = start + unit(交点 - start) × |end - start|；
+            // 若交点在末端之外（|交点 - start| > 线长）则延伸到交点，保证线段确实经过它。
+            let to_point = (point.x - start.x, point.y - start.y);
+            let point_length = to_point.0.hypot(to_point.1);
+            if point_length < 1e-6 {
+                continue;
+            }
+            let length = length_squared.sqrt();
+            let candidate = if point_length > length {
+                point
+            } else {
+                Point {
+                    x: start.x + to_point.0 / point_length * length,
+                    y: start.y + to_point.1 / point_length * length,
+                }
+            };
+            if best.is_none_or(|(best_distance, _)| distance < best_distance) {
+                best = Some((distance, candidate));
+            }
+        }
+    }
+    best.map(|(_, end)| end)
 }
 
 const MAX_PLOT_CURVES: usize = 16;

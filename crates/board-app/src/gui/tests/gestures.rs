@@ -1,6 +1,6 @@
 #[test]
 fn held_pointer_does_not_restart_after_remote_page_change() {
-    for tool in [Tool::Pen, Tool::Eraser, Tool::Select, Tool::Shape] {
+    for tool in [Tool::Pen, Tool::Eraser, Tool::Shape] {
         let mut app = app();
         let ctx = egui::Context::default();
         let size = Vec2::new(800.0, 600.0);
@@ -46,6 +46,66 @@ fn held_pointer_does_not_restart_after_remote_page_change() {
                 .all(|page| page.objects.is_empty())
         );
     }
+}
+
+#[test]
+fn select_empty_pointer_drag_pans_view_and_does_not_restart_after_remote_page_change() {
+    // v0.1.1 行为变更：选择工具在空白处按下不再创建空手势，而是平移黑板。
+    let mut app = app();
+    let ctx = egui::Context::default();
+    let size = Vec2::new(800.0, 600.0);
+    app.tool = Tool::Select;
+    app.session.document.add_page().unwrap();
+    app.session.document.set_current_page(0).unwrap();
+    let next = app.session.document.pages[1].id.clone();
+    frame(&mut app, &ctx, size, vec![], false);
+    let pos = Pos2::new(100.0, 100.0);
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![egui::Event::PointerMoved(pos), pointer(pos, true)],
+        false,
+    );
+    assert!(app.gesture.is_none());
+    assert!(app.view_drag.is_some());
+    let moved = Pos2::new(160.0, 150.0);
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![egui::Event::PointerMoved(moved)],
+        false,
+    );
+    assert_ne!(app.view_pan, egui::Vec2::ZERO, "拖动平移黑板");
+    app.incoming_message(
+        Request::new(
+            "neo:page",
+            "pages.select",
+            serde_json::json!({"document_id": app.session.document.id, "page_id": next}),
+        )
+        .unwrap()
+        .into(),
+    );
+    // 翻页恢复视图状态：平移拖动被取消且不重启。
+    assert!(app.view_drag.is_none());
+    let moved = Pos2::new(200.0, 180.0);
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![egui::Event::PointerMoved(moved)],
+        false,
+    );
+    assert!(app.view_drag.is_none());
+    frame(&mut app, &ctx, size, vec![pointer(moved, false)], false);
+    assert!(
+        app.session
+            .document
+            .pages
+            .iter()
+            .all(|page| page.objects.is_empty())
+    );
 }
 
 #[test]

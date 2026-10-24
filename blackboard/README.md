@@ -1,6 +1,6 @@
 # Blackboard
 
-`neo-blackboard` is a multipage writing board with an opaque textured background, optional handwriting recognition, and limited mathematics. **Version 0.1.0 is a source-only prerelease**; binary packaging and cross-platform acceptance testing are not complete.
+`neo-blackboard` is a multipage writing board with an opaque textured background, optional handwriting recognition, and limited mathematics. **Version 0.1.7**; binary packaging and cross-platform acceptance testing are not complete.
 
 ## Build and run
 
@@ -20,9 +20,12 @@ cargo build --release -p neo-blackboard --locked
 - The toolbar provides pens, color/width/dash settings, erasing, selection, lines, shapes, undo/redo, and page management for up to 500 pages. More holds secondary controls on narrow windows.
 - Click the toolbar pen or eraser once to select it, then again to open settings; no rapid double-click is needed. Other menus open with one click.
 - Clear all removes every object and connection on the current page as one undo step, without changing other pages. Drag erasing previews first and commits on release as one undo step.
-- Select the line tool and drag to draw; use selection to move objects and edit shapes.
+- Select the line tool and drag to draw; use selection to move objects and edit shapes. Endpoint snapping tolerance decays exponentially while a drag lasts (from 12 px toward 2 px), so long drags stop over-snapping. A drawn line passing near the crossing of two shape segments snaps to pass through their intersection (segment-through-intersection snapping; endpoints still snap when close).
+- Infinite canvas: every page pans and zooms from 10% to 500% without page-size limits. `Ctrl+Wheel` zooms around the pointer; plain wheel and middle-drag pan. In selection mode, dragging empty space pans (with light inertia on release) and a two-finger pinch zooms/pans with the anchor pinned under the fingers; object selection itself is unchanged. Each page remembers its own view across page switches, the view never enters saved documents or exports, and text rasterizes through the view transform at non-100% zoom (slightly soft). While zooming, the current percentage fades in above the bottom toolbar and fades out one second after zooming stops.
+- On touch screens, multi-finger writing is supported with the pen tool: all fingers write simultaneously through the touch pipeline (up to five concurrent strokes, each committing independently; palm rejection is not performed — keep palms off the surface). Touches never trigger zoom or pan while writing.
+- Five-finger gestures work in every tool: swipe down to minimize the board, swipe left/right to flip pages. A center-screen icon grows with the swipe and pops at the threshold to mean release-to-execute; moving the hand back cancels. Locking discards in-progress strokes, execution happens on release at full progress, and the gesture re-arms after all fingers lift. Toggle and trigger distance live in settings.
 - Select a screenshot/image or function plot and drag a blue corner handle to resize, keeping the opposite corner fixed. Images preserve aspect ratio; plot frames allow independent width/height changes while retaining expressions and coordinate ranges. Each drag is one undo step; scrolling over a selected plot still zooms its coordinate range. Selected images keep interior-click Agent authorization without an overlapping corner button.
-- Collapsing Blackboard reduces the same native window to a 220 x 64 logical-pixel expand/exit control, hiding the board surface. Expanding restores its geometry and content; undo history is retained.
+- Collapsing Blackboard now minimizes the window directly (no mini-bar) and switches the process into Windows efficiency mode (EcoQoS); clicking the taskbar icon restores the board, exits efficiency mode, and returns to fullscreen. Blackboard starts fullscreen (covering the taskbar) and is only temporarily top-most at startup, not persistently.
 - Drawing instead collapses only its toolbar and keeps ink visible. Neither collapse action confirms all windows are hidden for capture.
 
 ## Save, open, and export

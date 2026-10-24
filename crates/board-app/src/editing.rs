@@ -1,4 +1,4 @@
-use board_core::{BoardObject, ObjectKind, Operation, Point, ShapeKind, new_id};
+use board_core::{BoardObject, ObjectKind, Operation, Point, ShapeKind, StrokePoint, new_id};
 
 pub struct ErasePreview {
     source: board_core::Document,
@@ -144,6 +144,61 @@ fn erase_object_operations(
                 },
             },
         }));
+    } else if let ObjectKind::Shape {
+        shape,
+        points,
+        style,
+    } = &object.kind
+    {
+        // 线段与笔迹一致：按几何精确命中并切割，不用包围盒（斜线的包围盒
+        // 远大于线段本身，按 bbox 判定会把远处的橡皮圈当成命中并整条删除）。
+        if *shape == ShapeKind::Line && points.len() == 2 {
+            let radius = radius + style.width / 2.0;
+            let stroke: Vec<StrokePoint> = points
+                .iter()
+                .map(|p| StrokePoint {
+                    x: p.x,
+                    y: p.y,
+                    time: 0.0,
+                    pressure: 1.0,
+                })
+                .collect();
+            if !board_ink::stroke_hit(&stroke, path, radius).map_err(|e| format!("橡皮：{e:?}"))?
+            {
+                return Ok(operations);
+            }
+            let pieces = board_ink::erase_stroke(&stroke, path, radius)
+                .map_err(|e| format!("橡皮：{e:?}"))?;
+            operations.push(Operation::Delete {
+                id: object.id.clone(),
+            });
+            // 单点片段不构成线段，丢弃；切口的插值端点即新线段端点。
+            operations.extend(
+                pieces
+                    .into_iter()
+                    .filter(|piece| piece.len() >= 2)
+                    .map(|piece| Operation::Add {
+                        object: BoardObject {
+                            id: new_id(),
+                            kind: ObjectKind::Shape {
+                                shape: ShapeKind::Line,
+                                points: piece
+                                    .into_iter()
+                                    .map(|p| Point { x: p.x, y: p.y })
+                                    .collect(),
+                                style: *style,
+                            },
+                        },
+                    }),
+            );
+        } else if path
+            .iter()
+            .any(|p| bounds.expand(radius).contains(egui::pos2(p.x, p.y)))
+        {
+            operations.push(Operation::Delete {
+                id: object.id.clone(),
+            });
+        }
     } else if path
         .iter()
         .any(|p| bounds.expand(radius).contains(egui::pos2(p.x, p.y)))

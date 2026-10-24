@@ -174,7 +174,6 @@ pub fn probe_gpu(backends: wgpu::Backends) -> Result<(), String> {
 /// 探测子进程内的极简 block_on：poll + park 轮询；60 秒内未完成返回 Err，
 /// 该子进程随之以失败退出（父进程的超时通常更早生效）。
 fn block_on<T>(future: impl Future<Output = T>) -> Result<T, String> {
-    use std::future::Future;
     use std::sync::Arc;
     use std::task::{Context, Poll, Wake, Waker};
     struct ThreadWake(std::thread::Thread);

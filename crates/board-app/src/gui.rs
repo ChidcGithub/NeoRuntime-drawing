@@ -4,7 +4,7 @@ mod capture;
 mod handwriting_ui;
 #[path = "icons.rs"]
 mod icons;
-use crate::{AppMode, Result, editing, emit, features, transport_event};
+use crate::{AppMode, Result, editing, efficiency, emit, features, transport_event};
 use board_core::{
     BoardObject, Color, ObjectKind, Operation, Point, ShapeKind, StrokePoint, Style, new_id,
 };
@@ -577,17 +577,51 @@ struct MathInput {
     numbers: [u64; 5],
 }
 
+/// 选择模式双指捏合：锚定起始中点下的板面点，缩放按距离比、平移随中点（跟手）。
+#[derive(Clone, Copy)]
+struct PinchGesture {
+    start_dist: f32,
+    start_zoom: f32,
+    anchor: Point,
+}
+
+/// 选择模式空白处拖动（单指/鼠标）：跟手平移，松手按平滑末速惯性滑行。
+#[derive(Clone, Copy)]
+struct ViewDrag {
+    last: Pos2,
+    last_time: f64,
+    velocity: egui::Vec2,
+}
+
+/// 缩放比例提示状态：appeared=首次出现时刻，last_change=最后一次缩放时刻。
+/// 显示值实时取自 view_zoom，不在状态里存副本。
+#[derive(Clone, Copy)]
+struct ZoomHud {
+    appeared: f64,
+    last_change: f64,
+}
+
+/// 五指手势方向（锁向后本触摸序列内不换向）。
+#[derive(Clone, Copy, PartialEq)]
+enum SwipeAxis {
+    Down,
+    Left,
+    Right,
+}
+
+/// 五指手势锁定态：进度实时跟随手指，p≥1 弹跳提示松手执行，返回可撤销。
+#[derive(Clone, Copy)]
+struct SwipeGesture {
+    axis: SwipeAxis,
+    progress: f32,
+    popped: bool,
+    pop_time: f64,
+}
+
 struct CaptureContext {
     context: ContextToken,
     canvas_size: Vec2,
     stale: bool,
-}
-
-#[derive(Clone, Copy)]
-struct WindowGeometry {
-    size: Vec2,
-    position: Option<Pos2>,
-    maximized: bool,
 }
 
 struct BoardApp {
@@ -600,12 +634,38 @@ struct BoardApp {
     style: Style,
     eraser: f32,
     gesture: Option<Gesture>,
+    multi_gestures: Vec<(egui::TouchId, Gesture)>,
+    touch_writing: bool,
+    // 无限黑板视图（板面→屏幕：screen = board × zoom + pan），按页记忆；不写入文档。
+    view_zoom: f32,
+    view_pan: egui::Vec2,
+    page_views: HashMap<String, (f32, egui::Vec2)>,
+    // 视图归属页：与当前页不一致（任何路径翻页）时存取切换。
+    view_page_id: String,
+    // 选择模式：双指捏合（跟手）；空白处单指拖动平移（带惯性）。
+    pinch: Option<PinchGesture>,
+    select_touches: Vec<(egui::TouchId, Pos2)>,
+    // 触摸驱动的手势（形状/橡皮/坐标系）归属触点；指针手势不设置。
+    touch_gesture: Option<egui::TouchId>,
+    view_drag: Option<ViewDrag>,
+    fling: egui::Vec2,
+    // 五指手势：下滑最小化 / 左滑上一页 / 右滑下一页；中央图标随进度反馈。
+    swipe: Option<SwipeGesture>,
+    swipe_touches: Vec<(egui::TouchId, Pos2, Pos2)>,
+    swipe_speed: f32,
+    swipe_last: Option<(Pos2, f64)>,
+    swipe_cooldown: bool,
+    gestures_enabled: bool,
+    gesture_threshold: f32,
+    // 窗口首帧初始化：None→全屏+临时置顶；Some(false)→次帧回正常层。
+    window_started: Option<bool>,
+    // 缩放比例提示：缩放时在工具栏上方淡入，停止缩放 1 秒后淡出。
+    zoom_hud: Option<ZoomHud>,
     selected: Option<String>,
     collapsed: bool,
     toolbar_hidden: bool,
     armed_toolbar_menu: Option<egui::Id>,
     thumbnails: HashMap<String, board_render::PageThumbnail>,
-    expanded_geometry: Option<WindowGeometry>,
     files: bool,
     math: bool,
     path: String,
@@ -718,15 +778,20 @@ pub fn run(mode: AppMode, hosted: bool) -> Result {
             }
         }
     }
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title(mode.title())
+        .with_transparent(mode == AppMode::Drawing)
+        .with_decorations(false)
+        // 黑板首帧转全屏（覆盖任务栏）；画板保持最大化透明浮层。
+        .with_maximized(mode == AppMode::Drawing)
+        .with_visible(!hosted);
+    if mode == AppMode::Drawing {
+        // 画板是透明标注浮层：持续置顶才能盖在桌面上。
+        viewport = viewport.with_always_on_top();
+    }
     let mut options = eframe::NativeOptions {
         renderer,
-        viewport: egui::ViewportBuilder::default()
-            .with_title(mode.title())
-            .with_transparent(mode == AppMode::Drawing)
-            .with_decorations(false)
-            .with_maximized(true)
-            .with_always_on_top()
-            .with_visible(!hosted),
+        viewport,
         ..Default::default()
     };
     // #region debug-point C:backend-override
@@ -923,12 +988,31 @@ impl BoardApp {
             },
             eraser: 18.0,
             gesture: None,
+            multi_gestures: Vec::new(),
+            touch_writing: false,
+            view_zoom: 1.0,
+            view_pan: egui::Vec2::ZERO,
+            page_views: HashMap::new(),
+            view_page_id: String::new(),
+            pinch: None,
+            select_touches: Vec::new(),
+            touch_gesture: None,
+            view_drag: None,
+            fling: egui::Vec2::ZERO,
+            swipe: None,
+            swipe_touches: Vec::new(),
+            swipe_speed: 0.0,
+            swipe_last: None,
+            swipe_cooldown: false,
+            gestures_enabled: true,
+            gesture_threshold: 120.0,
+            window_started: None,
+            zoom_hud: None,
             selected: None,
             collapsed: false,
             toolbar_hidden: false,
             armed_toolbar_menu: None,
             thumbnails: HashMap::new(),
-            expanded_geometry: None,
             files: false,
             math: false,
             path: String::new(),
@@ -1119,6 +1203,12 @@ impl BoardApp {
                     self.textures.clear();
                     self.plot_worker.cancel();
                     self.plot_points = None;
+                    // 多指手势仅在文档/页面被替换时清空；自身提交推进的 revision
+                    // 由提交点的同步保持在书手势有效。
+                    self.multi_gestures.retain(|(_, gesture)| {
+                        gesture.document == self.session.document.id
+                            && gesture.page == self.session.document.current_page().id
+                    });
                     self.cancel_authorization();
                 }
                 Message::Event(event) if event.event == "job.finished" => {
@@ -1340,6 +1430,14 @@ impl BoardApp {
             self.plot_worker.cancel();
             self.gesture = None;
             self.split_drag = None;
+            // 文档被宿主变更：瞬态视图交互与手势一并取消。
+            self.view_drag = None;
+            self.pinch = None;
+            self.select_touches.clear();
+            self.fling = egui::Vec2::ZERO;
+            self.swipe = None;
+            self.swipe_touches.clear();
+            self.touch_gesture = None;
             // Only messages()' successful capture insertion changes revision here;
             // preserve its new selection, not a selection predating the host result.
             self.selected = capture_selection;
@@ -1927,6 +2025,7 @@ impl BoardApp {
     fn cancel_ink(&mut self) {
         self.cancel_math();
         self.cancel_recognition();
+        self.multi_gestures.clear();
     }
 
     fn cancel_recognition(&mut self) {
@@ -2061,29 +2160,14 @@ impl BoardApp {
         egui::Popup::close_all(ctx);
         if self.mode == AppMode::Blackboard {
             if collapsed {
-                self.expanded_geometry = Some(ctx.input(|i| {
-                    WindowGeometry {
-                        size: i
-                            .viewport()
-                            .inner_rect
-                            .map_or(self.canvas_size, |r| r.size()),
-                        position: i.viewport().outer_rect.map(|r| r.min),
-                        maximized: i.viewport().maximized.unwrap_or(false),
-                    }
-                }));
-                ctx.send_viewport_cmd(ViewportCommand::Maximized(false));
-                if let Some(position) = ctx.input(|i| i.viewport().inner_rect.map(|r| r.min)) {
-                    ctx.send_viewport_cmd(ViewportCommand::OuterPosition(position));
-                }
-                ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(220.0, 64.0)));
-                ctx.send_viewport_cmd(ViewportCommand::Resizable(false));
-            } else if let Some(geometry) = self.expanded_geometry.take() {
-                ctx.send_viewport_cmd(ViewportCommand::Resizable(true));
-                ctx.send_viewport_cmd(ViewportCommand::InnerSize(geometry.size));
-                if let Some(position) = geometry.position {
-                    ctx.send_viewport_cmd(ViewportCommand::OuterPosition(position));
-                }
-                ctx.send_viewport_cmd(ViewportCommand::Maximized(geometry.maximized));
+                // 收起 = 直接最小化窗口，并开启进程效率模式（EcoQoS）；
+                // 用户点回任务栏恢复时由 logic() 展开并退出效率模式。
+                ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+                efficiency::set_enabled(true);
+            } else {
+                // 恢复：退出效率模式并回到默认全屏。
+                efficiency::set_enabled(false);
+                ctx.send_viewport_cmd(ViewportCommand::Fullscreen(true));
             }
         }
         ctx.request_repaint();
@@ -2580,6 +2664,212 @@ impl BoardApp {
         }
     }
 
+    // #region 无限黑板视图（板面→屏幕）
+    fn screen_to_board(&self, pos: Pos2) -> Point {
+        Point {
+            x: (pos.x - self.view_pan.x) / self.view_zoom,
+            y: (pos.y - self.view_pan.y) / self.view_zoom,
+        }
+    }
+
+    fn view_transform(&self) -> egui::emath::TSTransform {
+        egui::emath::TSTransform {
+            scaling: self.view_zoom,
+            translation: self.view_pan,
+        }
+    }
+
+    /// 缩放发生：显示/刷新工具栏上方的比例提示（淡入，停止缩放 1 秒后淡出）。
+    fn note_zoom_changed(&mut self, time: f64) {
+        match &mut self.zoom_hud {
+            Some(hud) => hud.last_change = time,
+            None => {
+                self.zoom_hud = Some(ZoomHud {
+                    appeared: time,
+                    last_change: time,
+                });
+            }
+        }
+    }
+
+    /// 五指手势监视：5 触点同向滑动锁向（速度门槛防书写误触发），
+    /// 进度实时跟随手指；释放时 p≥1 才执行；手返回进度回落即撤销。
+    fn update_swipe_watcher(&mut self, ctx: &egui::Context, time: f64) {
+        if self.swipe_touches.len() != 5 {
+            // 执行后待全部手指抬起再武装。
+            if self.swipe_touches.is_empty() {
+                self.swipe_cooldown = false;
+            }
+            if let Some(swipe) = self.swipe.take()
+                && self.swipe_touches.is_empty()
+                && swipe.progress >= 1.0
+            {
+                self.execute_swipe(ctx, swipe.axis);
+            }
+            self.swipe_speed = 0.0;
+            self.swipe_last = None;
+            return;
+        }
+        if self.swipe_cooldown {
+            return;
+        }
+        let threshold = self.gesture_threshold.max(60.0);
+        let dead_zone = 30.0_f32;
+        let mut mean = egui::Vec2::ZERO;
+        for (_, current, start) in &self.swipe_touches {
+            mean += *current - *start;
+        }
+        mean /= 5.0;
+        // 中心速度（平滑）：滑动是快速挥动，缓慢移动按书写处理不锁向。
+        let speed = match self.swipe_last {
+            Some((last, last_time)) => {
+                let dt = ((time - last_time) as f32).max(1.0 / 240.0);
+                self.swipe_speed * 0.6 + ((mean - last.to_vec2()).length() / dt) * 0.4
+            }
+            None => self.swipe_speed,
+        };
+        self.swipe_speed = speed;
+        self.swipe_last = Some((Pos2::new(mean.x, mean.y), time));
+        // 方向锁：平均位移超死区后按主导轴锁定，本触摸序列内不换向。
+        let axis = if let Some(swipe) = self.swipe {
+            swipe.axis
+        } else {
+            if speed < 400.0 {
+                return;
+            }
+            if mean.y.abs() >= mean.x.abs() {
+                if mean.y > dead_zone {
+                    SwipeAxis::Down
+                } else {
+                    return;
+                }
+            } else if mean.x <= -dead_zone {
+                SwipeAxis::Left
+            } else if mean.x >= dead_zone {
+                SwipeAxis::Right
+            } else {
+                return;
+            }
+        };
+        if self.swipe.is_none() {
+            // 锁向前逐指校验：沿轴位移过半死区、横摆受锥角约束。
+            for (_, current, start) in &self.swipe_touches {
+                let d = *current - *start;
+                let (along, cross) = match axis {
+                    SwipeAxis::Down => (d.y, d.x.abs()),
+                    SwipeAxis::Left => (-d.x, d.y.abs()),
+                    SwipeAxis::Right => (d.x, d.y.abs()),
+                };
+                if along < dead_zone * 0.5 || cross > along * 0.6 {
+                    return;
+                }
+            }
+        }
+        let along = match axis {
+            SwipeAxis::Down => mean.y,
+            SwipeAxis::Left => -mean.x,
+            SwipeAxis::Right => mean.x,
+        };
+        let progress = (along / threshold).max(0.0);
+        match &mut self.swipe {
+            Some(swipe) => {
+                swipe.progress = progress;
+                if swipe.popped {
+                    if progress < 0.85 {
+                        // 迟滞退出弹跳态：手已明显返回。
+                        swipe.popped = false;
+                    }
+                } else if progress >= 1.0 {
+                    swipe.popped = true;
+                    swipe.pop_time = time;
+                }
+            }
+            None => {
+                if progress >= dead_zone / threshold {
+                    // 锁向即接管：手势优先，进行中的书写/捏合/拖动作废。
+                    // 锁向瞬间已过阈值（快速挥动）则立即进入弹跳态。
+                    let popped = progress >= 1.0;
+                    self.swipe = Some(SwipeGesture {
+                        axis,
+                        progress,
+                        popped,
+                        pop_time: if popped { time } else { 0.0 },
+                    });
+                    self.multi_gestures.clear();
+                    self.gesture = None;
+                    self.touch_gesture = None;
+                    self.pinch = None;
+                    self.view_drag = None;
+                    self.fling = egui::Vec2::ZERO;
+                }
+            }
+        }
+    }
+
+    fn execute_swipe(&mut self, ctx: &egui::Context, axis: SwipeAxis) {
+        self.swipe_cooldown = true;
+        match axis {
+            SwipeAxis::Down => {
+                self.status = "五指下滑：已最小化黑板".into();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+            SwipeAxis::Left => {
+                let current = self.session.document.current_page;
+                if current > 0 {
+                    self.status = "五指左滑：上一页".into();
+                    self.select_page(current - 1);
+                }
+            }
+            SwipeAxis::Right => {
+                let current = self.session.document.current_page;
+                if current + 1 < self.session.document.pages.len() {
+                    self.status = "五指右滑：下一页".into();
+                    self.select_page(current + 1);
+                }
+            }
+        }
+    }
+
+    /// 选择工具拾取：手柄/顶点（容差按缩放折算屏幕 12px）与对象命中（屏幕 8px）。
+    fn select_pick(&self, board: Point) -> Option<(BoardObject, Option<usize>, Option<usize>)> {
+        let board_pos = Pos2::new(board.x, board.y);
+        let handle_tolerance = 12.0 / self.view_zoom.max(f32::EPSILON);
+        let hit_tolerance = 8.0 / self.view_zoom.max(f32::EPSILON);
+        let mut original = None;
+        let mut vertex = None;
+        let mut resize = None;
+        if let Some(object) = self.selected_object() {
+            let nearest = |handles: Vec<Point>| {
+                handles
+                    .iter()
+                    .enumerate()
+                    .map(|(index, p)| (index, Pos2::new(p.x, p.y).distance(board_pos)))
+                    .filter(|(_, distance)| *distance < handle_tolerance)
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(index, _)| index)
+            };
+            vertex = nearest(editing::vertices(&object));
+            resize = nearest(editing::resize_handles(&object));
+            if vertex.is_some() || resize.is_some() {
+                original = Some(object);
+            }
+        }
+        if original.is_none() {
+            original = self
+                .session
+                .document
+                .current_page()
+                .objects
+                .iter()
+                .rev()
+                .find(|o| editing::hit_test(o, board_pos, hit_tolerance))
+                .cloned();
+        }
+        let original = original?;
+        Some((original, vertex, resize))
+    }
+    // #endregion
+
     fn select_page(&mut self, page: usize) {
         if self.session.document.set_current_page(page).is_ok() {
             self.gesture = None;
@@ -2837,13 +3127,26 @@ impl BoardApp {
                                 board_render::PageThumbnail::new(page, version),
                             );
                         }
+                        // 缩略图按页内容包围盒缩放（无限画布：书写范围任意
+                        // 大小与位置），留 5% 边距；空页回退固定画布尺寸。
+                        let mut content = page
+                            .objects
+                            .iter()
+                            .map(board_render::object_bounds)
+                            .fold(Rect::NOTHING, Rect::union);
+                        if content.is_positive() {
+                            let margin = (content.width().max(content.height()) * 0.05).max(24.0);
+                            content = content.expand(margin);
+                        } else {
+                            content = Rect::from_min_size(Pos2::ZERO, self.canvas_size);
+                        }
                         let resources =
                             |asset: &str| self.textures.get(asset).map(egui::TextureHandle::id);
                         if self.thumbnails[&page.id]
-                            .paint(
+                            .paint_with_bounds(
                                 ui.painter(),
                                 target,
-                                self.canvas_size,
+                                content,
                                 self.mode == AppMode::Blackboard,
                                 &resources,
                             )
@@ -2945,6 +3248,17 @@ impl BoardApp {
             self.tool = Tool::Pen;
             ui.close();
         }
+        ui.separator();
+        ui.heading("手势");
+        ui.checkbox(
+            &mut self.gestures_enabled,
+            "五指手势：下滑最小化 / 左右滑翻页",
+        )
+        .on_hover_text("五指同向快速滑动触发；黑板中部图标随进度变大，松手执行，手返回可撤销。");
+        ui.add_enabled(
+            self.gestures_enabled,
+            egui::Slider::new(&mut self.gesture_threshold, 80.0..=300.0).text("触发距离（像素）"),
+        );
     }
     fn request_close(&mut self, ctx: &egui::Context) {
         self.cancel_local_capture();
@@ -4034,81 +4348,477 @@ impl BoardApp {
             || self.split_drag.is_some()
             || egui::Popup::is_any_open(ui.ctx())
             || over_overlay;
+        // 按页记忆视图：当前页与视图归属页不一致（本地翻页或宿主翻页）时存取切换。
+        let current_page_id = self.session.document.current_page().id.clone();
+        if self.view_page_id != current_page_id {
+            let previous = std::mem::replace(&mut self.view_page_id, current_page_id);
+            if !previous.is_empty() {
+                self.page_views
+                    .insert(previous, (self.view_zoom, self.view_pan));
+            }
+            let (zoom, pan) = self
+                .page_views
+                .get(&self.view_page_id)
+                .copied()
+                .unwrap_or((1.0, egui::Vec2::ZERO));
+            self.view_zoom = zoom;
+            self.view_pan = pan;
+            self.pinch = None;
+            self.select_touches.clear();
+            self.view_drag = None;
+            self.fling = egui::Vec2::ZERO;
+        }
+        // 滚轮平移；Ctrl+滚轮以指针为锚缩放（10%–500%）；中键拖动平移。
+        // 直接读原始滚轮事件：不走 egui 平滑，画布平移需要即时跟手。
+        // 触控书写路径绝不触发缩放/平移（多指只写字）。
+        let mut scroll = egui::Vec2::ZERO;
+        let mut ctrl_scroll = false;
+        ui.input(|i| {
+            for event in &i.raw.events {
+                if let egui::Event::MouseWheel {
+                    delta, modifiers, ..
+                } = event
+                {
+                    scroll += *delta;
+                    ctrl_scroll |= modifiers.ctrl;
+                }
+            }
+        });
+        if !blocked && scroll != egui::Vec2::ZERO {
+            if ctrl_scroll {
+                if let Some(cursor) = ui.input(|i| i.pointer.hover_pos()) {
+                    let anchor = self.screen_to_board(cursor);
+                    self.view_zoom =
+                        (self.view_zoom * (scroll.y * 0.0015f32).exp()).clamp(0.1, 5.0);
+                    self.view_pan =
+                        cursor.to_vec2() - egui::Vec2::new(anchor.x, anchor.y) * self.view_zoom;
+                    self.note_zoom_changed(ui.input(|i| i.time));
+                }
+            } else {
+                self.view_pan += scroll;
+            }
+        }
+        if !blocked && ui.input(|i| i.pointer.middle_down()) {
+            let delta = ui.input(|i| i.pointer.delta());
+            // 中键拖拽跟手：内容跟随指针。
+            self.view_pan += delta;
+            self.fling = egui::Vec2::ZERO;
+        }
+        // 惯性滑行：无按下时按指数摩擦衰减；任何按下立即停止。
+        let any_down = ui.input(|i| i.pointer.any_down())
+            || !self.select_touches.is_empty()
+            || self.view_drag.is_some()
+            || self.pinch.is_some();
+        if any_down {
+            self.fling = egui::Vec2::ZERO;
+        } else if self.fling != egui::Vec2::ZERO {
+            let dt = ui.input(|i| i.stable_dt).max(1.0 / 240.0);
+            // 惯性沿松手速度方向继续（跟手语义）。
+            self.view_pan += self.fling * dt;
+            self.fling *= (-dt / 0.15f32).exp();
+            if self.fling.length() < 20.0 {
+                self.fling = egui::Vec2::ZERO;
+            }
+        }
+        // 触控多指书写：全部手指走 Touch 事件路径（每指独立手势，上限 5）；
+        // 无指按下时的指针按下回到鼠标/触控笔模式；触控模式下 egui 合成的
+        // 指针事件只服务工具栏等 UI，不参与手势。
+        let touch_events: Vec<egui::Event> = ui.input(|i| {
+            i.raw
+                .events
+                .iter()
+                .filter(|event| matches!(event, egui::Event::Touch { .. }))
+                .cloned()
+                .collect()
+        });
+        let frame_touch_start = touch_events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Touch {
+                    phase: egui::TouchPhase::Start,
+                    ..
+                }
+            )
+        });
+        for event in touch_events {
+            let egui::Event::Touch { id, phase, pos, .. } = event else {
+                continue;
+            };
+            match phase {
+                egui::TouchPhase::Start => {
+                    self.touch_writing = true;
+                    if blocked {
+                        continue;
+                    }
+                    let board = self.screen_to_board(pos);
+                    // 五指手势触点追踪（与书写/捏合并行，锁定时才接管）。
+                    self.swipe_touches.push((id, pos, pos));
+                    if self.tool == Tool::Pen {
+                        // 书写模式：每指独立手势，多指只写字。
+                        if self.multi_gestures.len() >= 5 {
+                            continue;
+                        }
+                        self.multi_gestures.push((
+                            id,
+                            Gesture {
+                                document: self.session.document.id.clone(),
+                                page: self.session.document.current_page().id.clone(),
+                                revision: self.session.document.revision,
+                                points: vec![StrokePoint {
+                                    x: board.x,
+                                    y: board.y,
+                                    time: ui.input(|i| i.time),
+                                    pressure: 1.0,
+                                }],
+                                original: None,
+                                vertex: None,
+                                resize: None,
+                                erasing: None,
+                            },
+                        ));
+                        self.ink_started();
+                    } else if self.tool == Tool::Select {
+                        // 选择模式：触点参与捏合/平移；落在对象上则触控拖动该对象。
+                        if let Some(slot) = self
+                            .select_touches
+                            .iter_mut()
+                            .find(|(touch_id, _)| *touch_id == id)
+                        {
+                            slot.1 = pos;
+                        } else {
+                            self.select_touches.push((id, pos));
+                        }
+                        if self.select_touches.len() == 2 {
+                            // 双指捏合接管：取消进行中的选择拖动。
+                            let (a, b) = (self.select_touches[0].1, self.select_touches[1].1);
+                            let mid = Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+                            self.pinch = Some(PinchGesture {
+                                start_dist: a.distance(b).max(1.0),
+                                start_zoom: self.view_zoom,
+                                anchor: self.screen_to_board(mid),
+                            });
+                            self.gesture = None;
+                            self.touch_gesture = None;
+                            self.view_drag = None;
+                        } else if let Some((original, vertex, resize)) = self.select_pick(board) {
+                            self.selected = Some(original.id.clone());
+                            self.gesture = Some(Gesture {
+                                document: self.session.document.id.clone(),
+                                page: self.session.document.current_page().id.clone(),
+                                revision: self.session.document.revision,
+                                points: vec![StrokePoint {
+                                    x: board.x,
+                                    y: board.y,
+                                    time: ui.input(|i| i.time),
+                                    pressure: 1.0,
+                                }],
+                                original: Some(original),
+                                vertex,
+                                resize,
+                                erasing: None,
+                            });
+                        } else {
+                            self.selected = None;
+                            self.view_drag = Some(ViewDrag {
+                                last: pos,
+                                last_time: ui.input(|i| i.time),
+                                velocity: egui::Vec2::ZERO,
+                            });
+                        }
+                    } else if matches!(self.tool, Tool::Shape | Tool::Eraser | Tool::Coordinates) {
+                        // 形状/橡皮/坐标系：首触点创建手势（与指针路径同构，
+                        // 线段吸附/衰减/交点在触屏同样生效）。
+                        if self.gesture.is_none() {
+                            self.gesture = Some(Gesture {
+                                document: self.session.document.id.clone(),
+                                page: self.session.document.current_page().id.clone(),
+                                revision: self.session.document.revision,
+                                points: vec![StrokePoint {
+                                    x: board.x,
+                                    y: board.y,
+                                    time: ui.input(|i| i.time),
+                                    pressure: 1.0,
+                                }],
+                                original: None,
+                                vertex: None,
+                                resize: None,
+                                erasing: (self.tool == Tool::Eraser).then(|| {
+                                    editing::ErasePreview::new(&self.session.document, self.eraser)
+                                }),
+                            });
+                            self.touch_gesture = Some(id);
+                            self.ink_started();
+                        }
+                    }
+                }
+                egui::TouchPhase::Move => {
+                    if blocked {
+                        continue;
+                    }
+                    if let Some(entry) = self
+                        .swipe_touches
+                        .iter_mut()
+                        .find(|(touch_id, _, _)| *touch_id == id)
+                    {
+                        entry.1 = pos;
+                    }
+                    if let Some(slot) = self
+                        .select_touches
+                        .iter_mut()
+                        .find(|(touch_id, _)| *touch_id == id)
+                    {
+                        slot.1 = pos;
+                        if self.select_touches.len() >= 2
+                            && let Some(pinch) = self.pinch
+                        {
+                            // 双指捏合跟手：锚点板面点始终钉在触点中点下。
+                            let (a, b) = (self.select_touches[0].1, self.select_touches[1].1);
+                            let dist = a.distance(b).max(1.0);
+                            let mid = Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+                            self.view_zoom =
+                                (pinch.start_zoom * dist / pinch.start_dist).clamp(0.1, 5.0);
+                            self.view_pan = mid.to_vec2()
+                                - egui::Vec2::new(pinch.anchor.x, pinch.anchor.y) * self.view_zoom;
+                            self.fling = egui::Vec2::ZERO;
+                            self.note_zoom_changed(ui.input(|i| i.time));
+                        } else if let Some(drag) = &mut self.view_drag {
+                            let delta = pos - drag.last;
+                            // 拖拽跟手：内容跟随手指。
+                            self.view_pan += delta;
+                            let dt =
+                                ((ui.input(|i| i.time) - drag.last_time) as f32).max(1.0 / 240.0);
+                            drag.velocity = drag.velocity * 0.7 + (delta / dt) * 0.3;
+                            drag.last = pos;
+                            drag.last_time = ui.input(|i| i.time);
+                        }
+                        continue;
+                    }
+                    let board = self.screen_to_board(pos);
+                    let spacing = 1.0 / self.view_zoom.max(0.05);
+                    if let Some((_, gesture)) = self
+                        .multi_gestures
+                        .iter_mut()
+                        .find(|(touch_id, _)| *touch_id == id)
+                    {
+                        if gesture.document == self.session.document.id
+                            && gesture.page == self.session.document.current_page().id
+                            && gesture.revision == self.session.document.revision
+                            && gesture.points.len() < 8000
+                            && gesture
+                                .points
+                                .last()
+                                .is_none_or(|p| (p.x - board.x).hypot(p.y - board.y) >= spacing)
+                        {
+                            gesture.points.push(StrokePoint {
+                                x: board.x,
+                                y: board.y,
+                                time: ui.input(|i| i.time),
+                                pressure: 1.0,
+                            });
+                        }
+                    } else if self.gesture.is_some()
+                        && matches!(
+                            self.tool,
+                            Tool::Select | Tool::Shape | Tool::Eraser | Tool::Coordinates
+                        )
+                        && let Some(gesture) = &mut self.gesture
+                        && gesture.document == self.session.document.id
+                        && gesture.page == self.session.document.current_page().id
+                        && gesture.revision == self.session.document.revision
+                        && gesture.points.len() < 8000
+                        && gesture
+                            .points
+                            .last()
+                            .is_none_or(|p| (p.x - board.x).hypot(p.y - board.y) >= spacing)
+                    {
+                        // 触控拖动对象：选择手势与指针路径同构（板面坐标）。
+                        gesture.points.push(StrokePoint {
+                            x: board.x,
+                            y: board.y,
+                            time: ui.input(|i| i.time),
+                            pressure: 1.0,
+                        });
+                    }
+                }
+                egui::TouchPhase::End => {
+                    self.swipe_touches
+                        .retain(|(touch_id, _, _)| *touch_id != id);
+                    self.select_touches.retain(|(touch_id, _)| *touch_id != id);
+                    if self.select_touches.len() < 2 {
+                        self.pinch = None;
+                    }
+                    if let Some(drag) = self.view_drag.take() {
+                        // 平移松手：按平滑末速惯性滑行。
+                        self.fling = if drag.velocity.length() > 60.0 {
+                            drag.velocity
+                        } else {
+                            egui::Vec2::ZERO
+                        };
+                    } else if self.gesture.is_some()
+                        && matches!(
+                            self.tool,
+                            Tool::Select | Tool::Shape | Tool::Eraser | Tool::Coordinates
+                        )
+                        && self.touch_gesture == Some(id)
+                        && !ui.input(|i| i.pointer.any_down())
+                    {
+                        // 触控手势松手：与指针路径同一提交管线。
+                        self.touch_gesture = None;
+                        self.finish_gesture_at(Instant::now());
+                    }
+                    if let Some(index) = self
+                        .multi_gestures
+                        .iter()
+                        .position(|(touch_id, _)| *touch_id == id)
+                    {
+                        let (_, gesture) = self.multi_gestures.remove(index);
+                        // 同帧内自身提交会触发 document_changed（并可能清理手势
+                        // 队列）：先取走其余手指的手势，提交后以新 revision 放回，
+                        // 并发书写不被自家提交打断。外部替换文档时仍全部取消。
+                        let others: Vec<(egui::TouchId, Gesture)> =
+                            self.multi_gestures.drain(..).collect();
+                        if gesture.document != self.session.document.id
+                            || gesture.page != self.session.document.current_page().id
+                            || gesture.revision != self.session.document.revision
+                        {
+                            self.status = "绘制期间文档已更新，本次触控已取消".into();
+                        } else if let Some(object) = self.preview_for(&gesture) {
+                            self.commit_pen_object(object, Instant::now());
+                            let new_revision = self.session.document.revision;
+                            for (touch_id, mut other) in others {
+                                other.revision = new_revision;
+                                self.multi_gestures.push((touch_id, other));
+                            }
+                        } else {
+                            for other in others {
+                                self.multi_gestures.push(other);
+                            }
+                        }
+                    }
+                }
+                egui::TouchPhase::Cancel => {
+                    self.swipe_touches
+                        .retain(|(touch_id, _, _)| *touch_id != id);
+                    self.select_touches.retain(|(touch_id, _)| *touch_id != id);
+                    if self.select_touches.len() < 2 {
+                        self.pinch = None;
+                    }
+                    self.view_drag = None;
+                    self.multi_gestures.retain(|(touch_id, _)| *touch_id != id);
+                }
+            }
+        }
+        if frame_touch_start {
+            self.touch_writing = true;
+        } else if self.multi_gestures.is_empty() && ui.input(|i| i.pointer.primary_pressed()) {
+            // 无指按下时的指针按下：回到鼠标/触控笔模式。
+            self.touch_writing = false;
+        }
+        // 五指手势（下滑最小化 / 左右滑翻页）：中央图标随进度反馈。
+        if self.gestures_enabled && !blocked {
+            self.update_swipe_watcher(ui.ctx(), ui.input(|i| i.time));
+        } else {
+            self.swipe = None;
+            self.swipe_touches.clear();
+        }
         if blocked {
             if ui.input(|i| i.pointer.any_released()) {
                 self.gesture = None;
             }
-        } else if let Some(pos) = response.interact_pointer_pos() {
+            self.multi_gestures.clear();
+            self.pinch = None;
+            self.select_touches.clear();
+            self.view_drag = None;
+            self.fling = egui::Vec2::ZERO;
+            self.swipe = None;
+            self.swipe_touches.clear();
+            self.touch_gesture = None;
+        } else if !self.touch_writing
+            && let Some(pos) = response.interact_pointer_pos()
+        {
             if self.gesture.is_none()
+                && self.view_drag.is_none()
                 && ui.input(|i| i.pointer.primary_pressed())
                 && (response.is_pointer_button_down_on() || response.clicked())
             {
+                let board = self.screen_to_board(pos);
                 let mut original = None;
                 let mut vertex = None;
                 let mut resize = None;
                 if self.tool == Tool::Select {
-                    if let Some(object) = self.selected_object() {
-                        let nearest = |handles: Vec<Point>| {
-                            handles
-                                .iter()
-                                .enumerate()
-                                .map(|(index, p)| (index, Pos2::new(p.x, p.y).distance(pos)))
-                                .filter(|(_, distance)| *distance < 12.0)
-                                .min_by(|a, b| a.1.total_cmp(&b.1))
-                                .map(|(index, _)| index)
-                        };
-                        vertex = nearest(editing::vertices(&object));
-                        resize = nearest(editing::resize_handles(&object));
-                        if vertex.is_some() || resize.is_some() {
-                            original = Some(object);
-                        }
+                    if let Some((picked, picked_vertex, picked_resize)) = self.select_pick(board) {
+                        self.selected = Some(picked.id.clone());
+                        original = Some(picked);
+                        vertex = picked_vertex;
+                        resize = picked_resize;
+                    } else {
+                        // 选择工具在空白处按下：拖动平移黑板（松手带轻微惯性）。
+                        self.selected = None;
+                        self.view_drag = Some(ViewDrag {
+                            last: pos,
+                            last_time: ui.input(|i| i.time),
+                            velocity: egui::Vec2::ZERO,
+                        });
                     }
-                    if original.is_none() {
-                        original = self
-                            .session
-                            .document
-                            .current_page()
-                            .objects
-                            .iter()
-                            .rev()
-                            .find(|o| editing::hit_test(o, pos, 8.0))
-                            .cloned();
-                    }
-                    self.selected = original.as_ref().map(|o| o.id.clone());
                 }
-                let start = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
-                self.gesture = Some(Gesture {
-                    document: self.session.document.id.clone(),
-                    page: self.session.document.current_page().id.clone(),
-                    revision: self.session.document.revision,
-                    points: vec![StrokePoint {
-                        x: start.x,
-                        y: start.y,
-                        time: ui.input(|i| i.time),
-                        pressure: 1.0,
-                    }],
-                    original,
-                    vertex,
-                    resize,
-                    erasing: (self.tool == Tool::Eraser)
-                        .then(|| editing::ErasePreview::new(&self.session.document, self.eraser)),
-                });
-                self.ink_started();
+                if self.view_drag.is_none() {
+                    let start = ui
+                        .input(|i| i.pointer.press_origin())
+                        .map(|origin| self.screen_to_board(origin))
+                        .unwrap_or(board);
+                    self.gesture = Some(Gesture {
+                        document: self.session.document.id.clone(),
+                        page: self.session.document.current_page().id.clone(),
+                        revision: self.session.document.revision,
+                        points: vec![StrokePoint {
+                            x: start.x,
+                            y: start.y,
+                            time: ui.input(|i| i.time),
+                            pressure: 1.0,
+                        }],
+                        original,
+                        vertex,
+                        resize,
+                        erasing: (self.tool == Tool::Eraser).then(|| {
+                            editing::ErasePreview::new(&self.session.document, self.eraser)
+                        }),
+                    });
+                    self.ink_started();
+                }
             }
-            if (response.is_pointer_button_down_on() || response.drag_stopped())
+            let board = self.screen_to_board(pos);
+            let spacing = 1.0 / self.view_zoom.max(0.05);
+            if let Some(drag) = &mut self.view_drag {
+                let delta = pos - drag.last;
+                // 拖拽跟手：内容跟随手指（板面原点随手指同向移动）。
+                self.view_pan += delta;
+                let dt = ((ui.input(|i| i.time) - drag.last_time) as f32).max(1.0 / 240.0);
+                drag.velocity = drag.velocity * 0.7 + (delta / dt) * 0.3;
+                drag.last = pos;
+                drag.last_time = ui.input(|i| i.time);
+            } else if (response.is_pointer_button_down_on() || response.drag_stopped())
                 && let Some(gesture) = &mut self.gesture
                 && gesture.points.len() < 8000
                 && gesture
                     .points
                     .last()
-                    .is_none_or(|p| (p.x - pos.x).hypot(p.y - pos.y) >= 1.0)
+                    .is_none_or(|p| (p.x - board.x).hypot(p.y - board.y) >= spacing)
             {
                 gesture.points.push(StrokePoint {
-                    x: pos.x,
-                    y: pos.y,
+                    x: board.x,
+                    y: board.y,
                     time: ui.input(|i| i.time),
                     pressure: 1.0,
                 });
+            }
+            if ui.input(|i| i.pointer.any_released())
+                && let Some(drag) = self.view_drag.take()
+            {
+                self.fling = if drag.velocity.length() > 60.0 {
+                    drag.velocity
+                } else {
+                    egui::Vec2::ZERO
+                };
             }
         }
         // #region debug-point B:canvas
@@ -4123,6 +4833,16 @@ impl BoardApp {
         } else {
             None
         };
+        let multi_previews: Vec<BoardObject> = self
+            .multi_gestures
+            .iter()
+            .filter(|(_, gesture)| {
+                gesture.document == self.session.document.id
+                    && gesture.page == self.session.document.current_page().id
+                    && gesture.revision == self.session.document.revision
+            })
+            .filter_map(|(_, gesture)| self.preview_for(gesture))
+            .collect();
         let plot_preview_changed = preview.as_ref().is_some_and(|object| {
             self.plot_points
                 .as_ref()
@@ -4218,25 +4938,34 @@ impl BoardApp {
         let debug_textures_us = debug_ink::micros(debug_textures_start);
         let debug_render_start = debug_ink::start();
         // #endregion
+        // 视图换算（本帧输入处理后的最终视图）；画布叠加与渲染共用同一变换。
+        let view = self.view_transform();
+        let (zoom, pan) = (self.view_zoom, self.view_pan);
+        let to_screen = |p: Pos2| Pos2::new(p.x * zoom + pan.x, p.y * zoom + pan.y);
         let rendered = if previewing {
             // 临时内容不共享文档 revision；旧入口清除 revision 键，取消后会重建真实页。
-            self.renderer.paint_page_with_resources(
+            self.renderer.paint_page_with_resources_viewed(
                 &painter,
                 &page,
                 self.mode == AppMode::Blackboard,
                 &resources,
+                view,
             )
         } else {
-            self.renderer.paint_page_at_document_revision(
+            self.renderer.paint_page_at_document_revision_viewed(
                 &painter,
                 &page,
                 (&self.session.document.id, self.session.document.revision),
                 self.mode == AppMode::Blackboard,
                 &resources,
+                view,
             )
         };
         if let Some(stroke) = &pen_preview {
-            board_render::paint_object_with_resources(&painter, stroke, &resources);
+            board_render::paint_object_with_resources_viewed(&painter, stroke, &resources, view);
+        }
+        for object in &multi_previews {
+            board_render::paint_object_with_resources_viewed(&painter, object, &resources, view);
         }
         // #region debug-point B:canvas
         let debug_render_us = debug_ink::micros(debug_render_start);
@@ -4300,7 +5029,7 @@ impl BoardApp {
             && let Some(Ok(report)) = &state.report
         {
             for (pos, _) in &report.candidates {
-                painter.circle_filled(*pos, 4.0, Color32::YELLOW);
+                painter.circle_filled(to_screen(*pos), 4.0, Color32::YELLOW);
             }
             if self.tool == Tool::Select
                 && !blocked
@@ -4309,7 +5038,7 @@ impl BoardApp {
                 && let Some((_, label)) = report
                     .candidates
                     .iter()
-                    .filter(|(pos, _)| click.distance(*pos) <= 10.0)
+                    .filter(|(pos, _)| click.distance(to_screen(*pos)) <= 10.0)
                     .min_by(|(a, _), (b, _)| click.distance(*a).total_cmp(&click.distance(*b)))
             {
                 state.coordinate = Some(label.clone());
@@ -4321,17 +5050,18 @@ impl BoardApp {
             .and_then(|id| page.objects.iter().find(|o| &o.id == id))
         {
             painter.rect_stroke(
-                board_render::object_bounds(object).expand(4.0),
+                view.mul_rect(board_render::object_bounds(object))
+                    .expand(4.0),
                 0.0,
                 Stroke::new(1.0, Color32::LIGHT_BLUE),
                 egui::StrokeKind::Outside,
             );
             for p in editing::vertices(object) {
-                painter.circle_filled(Pos2::new(p.x, p.y), 5.0, Color32::LIGHT_BLUE);
+                painter.circle_filled(to_screen(Pos2::new(p.x, p.y)), 5.0, Color32::LIGHT_BLUE);
             }
             for p in editing::resize_handles(object) {
                 painter.rect_filled(
-                    Rect::from_center_size(Pos2::new(p.x, p.y), Vec2::splat(10.0)),
+                    Rect::from_center_size(to_screen(Pos2::new(p.x, p.y)), Vec2::splat(10.0)),
                     0.0,
                     Color32::LIGHT_BLUE,
                 );
@@ -4344,13 +5074,13 @@ impl BoardApp {
                 Color32::YELLOW
             };
             painter.rect_stroke(
-                bounds.expand(4.0),
+                view.mul_rect(bounds).expand(4.0),
                 0.0,
                 Stroke::new(3.0, color),
                 egui::StrokeKind::Outside,
             );
             painter.text(
-                bounds.left_top() + Vec2::splat(8.0),
+                to_screen(bounds.left_top()) + Vec2::splat(8.0),
                 Align2::LEFT_TOP,
                 if allowed {
                     "松手合并函数图"
@@ -4361,19 +5091,117 @@ impl BoardApp {
                 color,
             );
         }
+        // 五指手势中央图标：随进度变大变实，达阈值弹跳提示松手执行。
+        if let Some(swipe) = &self.swipe {
+            let progress = swipe.progress.min(1.0);
+            let center = Pos2::new(rect.center().x, rect.center().y);
+            let base = (rect.width().min(rect.height()) * 0.09).clamp(28.0, 64.0);
+            let pop = if swipe.popped {
+                let dt = ((ui.input(|i| i.time) - swipe.pop_time) as f32).max(0.0);
+                1.0 + 0.35 * (-dt / 0.09f32).exp()
+            } else {
+                1.0
+            };
+            let radius = base * (0.55 + 0.85 * progress) * pop;
+            let alpha = (70.0 + 150.0 * progress) as u8;
+            let tint = Color32::from_rgba_unmultiplied(255, 255, 255, alpha);
+            painter.circle_filled(
+                center,
+                radius,
+                Color32::from_rgba_unmultiplied(255, 255, 255, alpha / 3),
+            );
+            painter.circle_stroke(center, radius, Stroke::new(2.0, tint));
+            let dir = match swipe.axis {
+                SwipeAxis::Down => egui::vec2(0.0, 1.0),
+                SwipeAxis::Left => egui::vec2(-1.0, 0.0),
+                SwipeAxis::Right => egui::vec2(1.0, 0.0),
+            };
+            let shaft = radius * 0.55;
+            let head = radius * 0.3;
+            let tip = center + dir * shaft;
+            let tail = center - dir * shaft;
+            let side = egui::vec2(-dir.y, dir.x);
+            let stroke = Stroke::new(3.0 * pop, tint);
+            painter.line_segment([tail, tip], stroke);
+            painter.line_segment([tip, tip - dir * head + side * head], stroke);
+            painter.line_segment([tip, tip - dir * head - side * head], stroke);
+            if swipe.popped {
+                painter.text(
+                    center + egui::vec2(0.0, radius + 18.0),
+                    Align2::CENTER_TOP,
+                    match swipe.axis {
+                        SwipeAxis::Down => "松手最小化",
+                        SwipeAxis::Left => "松手上一页",
+                        SwipeAxis::Right => "松手下一页",
+                    },
+                    egui::FontId::proportional(16.0),
+                    tint,
+                );
+            }
+        }
+        // 缩放比例提示：缩放时淡入，停止缩放 1 秒后淡出（工具栏上方居中）。
+        let mut hud_expired = false;
+        if let Some(hud) = &self.zoom_hud {
+            let now = ui.input(|i| i.time);
+            let hold_end = hud.last_change + 1.0;
+            // 过期只按时间判定：淡入首帧 alpha 为 0 不算淡出完成。
+            if now > hold_end + 0.3 {
+                hud_expired = true;
+            } else {
+                let fade_in = (((now - hud.appeared) / 0.15) as f32).clamp(0.0, 1.0);
+                let fade_out = if now > hold_end {
+                    (1.0 - ((now - hold_end) / 0.3) as f32).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                let alpha = fade_in * fade_out;
+                let text = format!("{}%", (self.view_zoom * 100.0).round() as i32);
+                let font = egui::FontId::proportional(22.0);
+                let text_size = painter
+                    .layout_no_wrap(text.clone(), font.clone(), Color32::WHITE)
+                    .size();
+                // 工具栏锚定底部居中：提示放在其上方。
+                let center = Pos2::new(rect.center().x, rect.bottom() - 96.0);
+                let pill = Rect::from_center_size(center, text_size + egui::vec2(30.0, 16.0));
+                painter.rect_filled(
+                    pill,
+                    pill.height() / 2.0,
+                    Color32::from_rgba_unmultiplied(28, 28, 30, (alpha * 190.0) as u8),
+                );
+                painter.text(
+                    pill.center(),
+                    Align2::CENTER_CENTER,
+                    text,
+                    font,
+                    Color32::from_rgba_unmultiplied(255, 255, 255, (alpha * 235.0) as u8),
+                );
+            }
+            // 淡入/淡出动画期间保持重绘。
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(16));
+        }
+        if hud_expired {
+            self.zoom_hud = None;
+        }
         if blocked {
             return;
         }
         if self.tool == Tool::Eraser
             && let Some(pos) = response.hover_pos()
         {
-            painter.circle_stroke(pos, self.eraser, Stroke::new(1.0, Color32::LIGHT_BLUE));
+            // 橡皮半径为板面单位，屏幕半径按缩放折算。
+            painter.circle_stroke(
+                pos,
+                self.eraser * zoom,
+                Stroke::new(1.0, Color32::LIGHT_BLUE),
+            );
         }
         if response.clicked()
             && !response.drag_stopped()
             && let Some(object) = response
                 .interact_pointer_pos()
-                .and_then(|pos| self.clicked_image(pos))
+                .map(|pos| self.screen_to_board(pos))
+                .and_then(|board| self.clicked_image(Pos2::new(board.x, board.y)))
         {
             self.open_image_agent(&object);
         } else if response.drag_stopped() || response.clicked() {
@@ -4399,9 +5227,10 @@ impl BoardApp {
                     object.kind,
                     ObjectKind::FunctionPlot { .. } | ObjectKind::CoordinateSystem { .. }
                 )
-                && response
-                    .hover_pos()
-                    .is_some_and(|pos| board_render::object_bounds(&object).contains(pos))
+                && response.hover_pos().is_some_and(|pos| {
+                    view.mul_rect(board_render::object_bounds(&object))
+                        .contains(pos)
+                })
             {
                 editing::scale_plot(&mut object, if scroll > 0.0 { 0.9 } else { 1.1 });
                 self.apply(vec![Operation::Update { object }]);
@@ -4443,7 +5272,12 @@ impl BoardApp {
         if let Some(edit) = self.polygon_vertex_edit() {
             return edit.ok().map(|edit| edit.object);
         }
-        let gesture = self.gesture.as_ref()?;
+        self.preview_for(self.gesture.as_ref()?)
+    }
+
+    /// Per-gesture preview: the pointer path passes the primary gesture and the
+    /// touch path passes each extra-finger gesture; same object construction.
+    fn preview_for(&self, gesture: &Gesture) -> Option<BoardObject> {
         if gesture.document != self.session.document.id
             || gesture.page != self.session.document.current_page().id
             || gesture.revision != self.session.document.revision
@@ -4452,6 +5286,9 @@ impl BoardApp {
         }
         let first = gesture.points.first()?;
         let last = gesture.points.last()?;
+        // 吸附容差随拖动时长指数衰减（板面单位，按缩放折算屏幕像素）。
+        let elapsed = (last.time - first.time).max(0.0) as f32;
+        let snap_radius = features::drag_snap_radius(elapsed) / self.view_zoom.max(f32::EPSILON);
         let mut start = Point {
             x: first.x,
             y: first.y,
@@ -4467,10 +5304,36 @@ impl BoardApp {
             },
             Tool::Shape => {
                 if self.shape == ShapeKind::Line {
-                    start =
-                        features::snap_endpoint(self.session.document.current_page(), start, None);
-                    end = board_ink::snap_angle(start, end, 6.0).unwrap_or(end);
-                    end = features::snap_endpoint(self.session.document.current_page(), end, None);
+                    start = features::snap_endpoint_with_radius(
+                        self.session.document.current_page(),
+                        start,
+                        None,
+                        snap_radius,
+                    );
+                    // 线身穿交点吸附最优先（教师场景：画线精确穿过已有线段的
+                    // 交点）；命中则跳过角度/端点吸附——角度吸附先执行会把线
+                    // 拉到 15° 倍数方向上，导致穿交点时有时无。
+                    if let Some(snapped) = features::snap_segment_through_intersections(
+                        self.session.document.current_page(),
+                        start,
+                        end,
+                        None,
+                        snap_radius,
+                    ) {
+                        end = snapped;
+                    } else {
+                        // 特定度数吸附容差同样随拖动时长指数衰减（6° → 1°，
+                        // 角度容差与缩放无关，不做 zoom 折算）。
+                        let angle_tolerance =
+                            6.0 * (features::drag_snap_radius(elapsed) / features::SNAP_RADIUS_MAX);
+                        end = board_ink::snap_angle(start, end, angle_tolerance).unwrap_or(end);
+                        end = features::snap_endpoint_with_radius(
+                            self.session.document.current_page(),
+                            end,
+                            None,
+                            snap_radius,
+                        );
+                    }
                 }
                 ObjectKind::Shape {
                     shape: self.shape,
@@ -4499,11 +5362,40 @@ impl BoardApp {
                         return Some(object);
                     }
                     end = editing::snap_vertex_angle(&object, index, end);
-                    end = features::snap_endpoint(
+                    let endpoint_snapped = features::snap_endpoint_with_radius(
                         self.session.document.current_page(),
                         end,
                         Some(&object.id),
+                        snap_radius,
                     );
+                    // 端点吸附未命中时：拖动线段端点经过交点则吸附为经过之
+                    // （仅 Line 的端点拖动；锚点为线的另一端）。
+                    end = if endpoint_snapped == end {
+                        let anchor = match (&object.kind, index) {
+                            (
+                                ObjectKind::Shape {
+                                    shape: ShapeKind::Line,
+                                    points,
+                                    ..
+                                },
+                                i @ 0..=1,
+                            ) => points.get(1 - i).copied(),
+                            _ => None,
+                        };
+                        match anchor {
+                            Some(anchor) => features::snap_segment_through_intersections(
+                                self.session.document.current_page(),
+                                anchor,
+                                end,
+                                Some(&object.id),
+                                snap_radius,
+                            )
+                            .unwrap_or(end),
+                            None => end,
+                        }
+                    } else {
+                        endpoint_snapped
+                    };
                     editing::move_vertex(&mut object, index, end);
                 } else {
                     editing::translate(
@@ -4580,7 +5472,15 @@ impl BoardApp {
     }
 
     fn finish_gesture(&mut self) {
+        // 指针路径提交时保护仍在书写的附加指手势：先取走、提交后放回
+        // （revision 同步为提交后的文档状态）。
+        let others: Vec<(egui::TouchId, Gesture)> = self.multi_gestures.drain(..).collect();
         self.finish_gesture_at(Instant::now());
+        let new_revision = self.session.document.revision;
+        for (touch_id, mut gesture) in others {
+            gesture.revision = new_revision;
+            self.multi_gestures.push((touch_id, gesture));
+        }
     }
 
     fn finish_gesture_at(&mut self, now: Instant) {
@@ -4634,7 +5534,7 @@ impl BoardApp {
                     Err(error) => self.status = error,
                 }
             }
-        } else if let Some(mut object) = preview {
+        } else if let Some(object) = preview {
             if self.tool == Tool::Select {
                 if gesture.original.as_ref() != Some(&object) {
                     if let Some((target, operations)) = merge {
@@ -4662,68 +5562,80 @@ impl BoardApp {
                     }
                 }
             } else {
-                if let ObjectKind::Stroke { points, .. } = &mut object.kind {
-                    *points = board_ink::smooth_resample(points, 2.0, 0.45, 38.0)
-                        .unwrap_or_else(|_| points.clone());
+                self.commit_pen_object(object, now);
+            }
+        }
+        // 多指并发：本次提交推进的 revision 同步给仍在书写的附加指手势，
+        // 避免它们被当作"文档已更新"而取消。
+        let new_revision = self.session.document.revision;
+        for (_, gesture) in &mut self.multi_gestures {
+            gesture.revision = new_revision;
+        }
+    }
+
+    /// 笔类预览对象的统一提交：平滑、入库、个人笔迹学习与墨迹候选流。
+    /// 主指针路径与触控附加指路径共用，保证两条路径行为一致。
+    fn commit_pen_object(&mut self, mut object: BoardObject, now: Instant) {
+        if let ObjectKind::Stroke { points, .. } = &mut object.kind {
+            *points = board_ink::smooth_resample(points, 2.0, 0.45, 38.0)
+                .unwrap_or_else(|_| points.clone());
+        }
+        let stroke = if let ObjectKind::Stroke { points, .. } = &object.kind {
+            Some(points.clone())
+        } else {
+            None
+        };
+        let mut ink = self.ink.clone();
+        let mut sources = self.ink_sources.clone();
+        let mut excluded = self.ink_excluded;
+        let previous_revision = self.session.document.revision;
+        object.id = new_id();
+        let source = stroke.as_ref().map(|_| object.clone());
+        if matches!(
+            object.kind,
+            ObjectKind::Shape {
+                shape: ShapeKind::Line,
+                ..
+            }
+        ) {
+            self.commit_line(object, true, &[0, 1]);
+        } else {
+            self.apply(vec![Operation::Add { object }]);
+        }
+        // Only successful fresh local pen commits teach style. Imports, replay,
+        // host operations, generated answers and moving old ink never enter here.
+        if self.mode == AppMode::Blackboard
+            && self.tool == Tool::Pen
+            && self.handwriting.enabled
+            && self.session.document.revision != previous_revision
+            && let Some(BoardObject {
+                kind: ObjectKind::Stroke { points, style },
+                ..
+            }) = &source
+        {
+            self.handwriting.profile.observe_stroke(points, *style);
+        }
+        if self.ink_math_mode != InkMathMode::Off
+            && self.session.document.revision != previous_revision
+            && let Some(stroke) = stroke
+        {
+            if !features::joins_expression(&ink, &stroke) {
+                excluded.0 += ink.len();
+                excluded.1 += ink.iter().map(Vec::len).sum::<usize>();
+                ink.clear();
+                sources.clear();
+            }
+            ink.push(stroke);
+            sources.push(source.unwrap());
+            let context = ContextToken::capture(&self.session.document);
+            match self.auto_gate.strokes_finished(now, context.clone(), &ink) {
+                Ok(()) => {
+                    self.ink = ink;
+                    self.ink_sources = sources;
+                    self.ink_excluded = excluded;
+                    self.ink_context = Some(context);
                 }
-                let stroke = if let ObjectKind::Stroke { points, .. } = &object.kind {
-                    Some(points.clone())
-                } else {
-                    None
-                };
-                let mut ink = self.ink.clone();
-                let mut sources = self.ink_sources.clone();
-                let mut excluded = self.ink_excluded;
-                let previous_revision = self.session.document.revision;
-                object.id = new_id();
-                let source = stroke.as_ref().map(|_| object.clone());
-                if matches!(
-                    object.kind,
-                    ObjectKind::Shape {
-                        shape: ShapeKind::Line,
-                        ..
-                    }
-                ) {
-                    self.commit_line(object, true, &[0, 1]);
-                } else {
-                    self.apply(vec![Operation::Add { object }]);
-                }
-                // Only successful fresh local pen commits teach style. Imports, replay,
-                // host operations, generated answers and moving old ink never enter here.
-                if self.mode == AppMode::Blackboard
-                    && self.tool == Tool::Pen
-                    && self.handwriting.enabled
-                    && self.session.document.revision != previous_revision
-                    && let Some(BoardObject {
-                        kind: ObjectKind::Stroke { points, style },
-                        ..
-                    }) = &source
-                {
-                    self.handwriting.profile.observe_stroke(points, *style);
-                }
-                if self.ink_math_mode != InkMathMode::Off
-                    && self.session.document.revision != previous_revision
-                    && let Some(stroke) = stroke
-                {
-                    if !features::joins_expression(&ink, &stroke) {
-                        excluded.0 += ink.len();
-                        excluded.1 += ink.iter().map(Vec::len).sum::<usize>();
-                        ink.clear();
-                        sources.clear();
-                    }
-                    ink.push(stroke);
-                    sources.push(source.unwrap());
-                    let context = ContextToken::capture(&self.session.document);
-                    match self.auto_gate.strokes_finished(now, context.clone(), &ink) {
-                        Ok(()) => {
-                            self.ink = ink;
-                            self.ink_sources = sources;
-                            self.ink_excluded = excluded;
-                            self.ink_context = Some(context);
-                        }
-                        Err(e) => self.status = e.to_string(),
-                    }
-                }
+                Err(e) => self.status = e.to_string(),
             }
         }
     }
@@ -4734,6 +5646,32 @@ impl eframe::App for BoardApp {
         [0.0; 4]
     }
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // 窗口首帧初始化：黑板默认全屏（覆盖任务栏）；弹出时置顶一下即回正常层。
+        match self.window_started {
+            None => {
+                self.window_started = Some(false);
+                if self.mode == AppMode::Blackboard && !self.compact_entry() {
+                    ctx.send_viewport_cmd(ViewportCommand::Fullscreen(true));
+                    ctx.send_viewport_cmd(ViewportCommand::WindowLevel(
+                        egui::WindowLevel::AlwaysOnTop,
+                    ));
+                }
+            }
+            Some(false) => {
+                self.window_started = Some(true);
+                if self.mode == AppMode::Blackboard {
+                    ctx.send_viewport_cmd(ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                }
+            }
+            Some(true) => {}
+        }
+        // 收起=最小化：用户点回任务栏恢复窗口 → 展开并退出效率模式。
+        if self.collapsed
+            && self.mode == AppMode::Blackboard
+            && ctx.input(|i| i.viewport().minimized) == Some(false)
+        {
+            self.set_collapsed(ctx, false);
+        }
         // #region debug-point D:logic
         let debug_logic_start = debug_ink::start();
         let mut debug_incoming = 0_u32;
@@ -4950,7 +5888,14 @@ impl BoardApp {
         self.toolbar(ctx);
         if self.tool != previous_tool {
             self.gesture = None;
+            self.touch_gesture = None;
             self.cancel_ink();
+            self.swipe = None;
+            self.swipe_touches.clear();
+            self.pinch = None;
+            self.select_touches.clear();
+            self.view_drag = None;
+            self.fling = egui::Vec2::ZERO;
         }
         if self.compact_entry() {
             return;
