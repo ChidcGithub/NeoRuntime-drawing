@@ -498,3 +498,69 @@ fn zoom_hud_fades_in_holds_one_second_then_fades_out() {
     frame_at(&mut app, &ctx, vec![], 1.90);
     assert!(app.zoom_hud.is_none(), "淡出完成后隐藏");
 }
+
+#[test]
+fn drawing_mode_stays_one_to_one_without_infinite_canvas() {
+    // 画板是透明标注浮层：无无限黑板，视图恒为 1:1（板面=屏幕）。
+    let mut session = Session::new(AppMode::Drawing.kind());
+    session.handle(
+        Request::new(
+            "neo:setup",
+            "configure",
+            serde_json::json!({"classroom_safe": true, "desktop_capture_allowed": false, "agent_allowed": false}),
+        )
+        .unwrap(),
+    );
+    let mut app = BoardApp::new(AppMode::Drawing, session, false, None, Default::default());
+    let ctx = egui::Context::default();
+    let size = Vec2::new(800.0, 600.0);
+    let cursor = Pos2::new(400.0, 300.0);
+    frame(&mut app, &ctx, size, vec![], false);
+    // Ctrl+滚轮：不缩放。
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![egui::Event::PointerMoved(cursor), wheel(egui::vec2(0.0, 4000.0), true)],
+        false,
+    );
+    assert_eq!(app.view_zoom, 1.0, "画板不缩放");
+    // 滚轮平移：不平移。
+    frame(&mut app, &ctx, size, vec![wheel(egui::vec2(0.0, -400.0), false)], false);
+    assert_eq!(app.view_pan, egui::Vec2::ZERO, "画板不平移");
+    // 中键拖动：不平移。
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![pointer(cursor, true)],
+        false,
+    );
+    assert_eq!(app.view_pan, egui::Vec2::ZERO);
+    // 选择模式双指捏合：不捏合。
+    app.tool = Tool::Select;
+    frame(&mut app, &ctx, size, vec![pointer(cursor, false)], false);
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![
+            touch_event(1, egui::TouchPhase::Start, 100.0, 300.0),
+            touch_event(2, egui::TouchPhase::Start, 200.0, 300.0),
+        ],
+        false,
+    );
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![
+            touch_event(1, egui::TouchPhase::Move, 40.0, 300.0),
+            touch_event(2, egui::TouchPhase::Move, 260.0, 300.0),
+        ],
+        false,
+    );
+    assert!(app.pinch.is_none(), "画板无捏合");
+    assert_eq!(app.view_zoom, 1.0);
+    assert_eq!(app.view_pan, egui::Vec2::ZERO);
+}

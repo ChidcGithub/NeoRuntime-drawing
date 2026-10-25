@@ -4368,6 +4368,14 @@ impl BoardApp {
             self.view_drag = None;
             self.fling = egui::Vec2::ZERO;
         }
+        // 画板是透明标注浮层：视图恒为 1:1，无缩放平移（防御性强制）。
+        if self.mode != AppMode::Blackboard {
+            self.view_zoom = 1.0;
+            self.view_pan = egui::Vec2::ZERO;
+            self.pinch = None;
+            self.view_drag = None;
+            self.fling = egui::Vec2::ZERO;
+        }
         // 滚轮平移；Ctrl+滚轮以指针为锚缩放（10%–500%）；中键拖动平移。
         // 直接读原始滚轮事件：不走 egui 平滑，画布平移需要即时跟手。
         // 触控书写路径绝不触发缩放/平移（多指只写字）。
@@ -4384,7 +4392,8 @@ impl BoardApp {
                 }
             }
         });
-        if !blocked && scroll != egui::Vec2::ZERO {
+        // 无限黑板仅黑板模式：画板是透明标注浮层，恒为 1:1（板面=屏幕）。
+        if !blocked && self.mode == AppMode::Blackboard && scroll != egui::Vec2::ZERO {
             if ctrl_scroll {
                 if let Some(cursor) = ui.input(|i| i.pointer.hover_pos()) {
                     let anchor = self.screen_to_board(cursor);
@@ -4398,7 +4407,7 @@ impl BoardApp {
                 self.view_pan += scroll;
             }
         }
-        if !blocked && ui.input(|i| i.pointer.middle_down()) {
+        if !blocked && self.mode == AppMode::Blackboard && ui.input(|i| i.pointer.middle_down()) {
             let delta = ui.input(|i| i.pointer.delta());
             // 中键拖拽跟手：内容跟随指针。
             self.view_pan += delta;
@@ -4478,7 +4487,8 @@ impl BoardApp {
                         ));
                         self.ink_started();
                     } else if self.tool == Tool::Select {
-                        // 选择模式：触点参与捏合/平移；落在对象上则触控拖动该对象。
+                        // 选择模式：黑板触点参与捏合/平移；画板仅选择对象。
+                        let blackboard = self.mode == AppMode::Blackboard;
                         if let Some(slot) = self
                             .select_touches
                             .iter_mut()
@@ -4488,7 +4498,7 @@ impl BoardApp {
                         } else {
                             self.select_touches.push((id, pos));
                         }
-                        if self.select_touches.len() == 2 {
+                        if blackboard && self.select_touches.len() == 2 {
                             // 双指捏合接管：取消进行中的选择拖动。
                             let (a, b) = (self.select_touches[0].1, self.select_touches[1].1);
                             let mid = Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
@@ -4517,13 +4527,16 @@ impl BoardApp {
                                 resize,
                                 erasing: None,
                             });
-                        } else {
+                        } else if blackboard {
                             self.selected = None;
                             self.view_drag = Some(ViewDrag {
                                 last: pos,
                                 last_time: ui.input(|i| i.time),
                                 velocity: egui::Vec2::ZERO,
                             });
+                        } else {
+                            // 画板：空白处触摸不平移。
+                            self.selected = None;
                         }
                     } else if matches!(self.tool, Tool::Shape | Tool::Eraser | Tool::Coordinates) {
                         // 形状/橡皮/坐标系：首触点创建手势（与指针路径同构，
