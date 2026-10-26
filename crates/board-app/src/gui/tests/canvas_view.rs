@@ -564,3 +564,53 @@ fn drawing_mode_stays_one_to_one_without_infinite_canvas() {
     assert_eq!(app.view_zoom, 1.0);
     assert_eq!(app.view_pan, egui::Vec2::ZERO);
 }
+
+#[test]
+fn touch_select_drag_commits_the_move() {
+    // 触摸选择拖动：预览跟手，抬手必须提交移动（touch_gesture 归属标记）。
+    let line = BoardObject {
+        id: "l".into(),
+        kind: ObjectKind::Shape {
+            shape: ShapeKind::Line,
+            points: vec![Point { x: 100.0, y: 100.0 }, Point { x: 200.0, y: 100.0 }],
+            style: Default::default(),
+        },
+    };
+    let (mut app, ctx) = plot_drag_app(vec![line]);
+    let size = Vec2::new(800.0, 600.0);
+    frame(&mut app, &ctx, size, vec![], false);
+    // 按在线中点 (150,100)，拖到 (250,180)，抬手。
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![touch_event(1, egui::TouchPhase::Start, 150.0, 100.0)],
+        false,
+    );
+    assert!(app.gesture.is_some(), "触摸选中对象应创建拖动手势");
+    assert_eq!(app.touch_gesture, Some(egui::TouchId(1)), "归属触点应记录");
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![touch_event(1, egui::TouchPhase::Move, 250.0, 180.0)],
+        false,
+    );
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![touch_event(1, egui::TouchPhase::End, 250.0, 180.0)],
+        false,
+    );
+    assert!(app.gesture.is_none(), "抬手后手势应结束");
+    let points = match &app.session.document.current_page().objects[0].kind {
+        ObjectKind::Shape { points, .. } => points.clone(),
+        other => panic!("unexpected object: {other:?}"),
+    };
+    assert_eq!(
+        points,
+        vec![Point { x: 200.0, y: 180.0 }, Point { x: 300.0, y: 180.0 }],
+        "触摸拖动应提交 (100,80) 的位移"
+    );
+}

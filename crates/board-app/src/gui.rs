@@ -4527,6 +4527,7 @@ impl BoardApp {
                                 resize,
                                 erasing: None,
                             });
+                            self.touch_gesture = Some(id);
                         } else if blackboard {
                             self.selected = None;
                             self.view_drag = Some(ViewDrag {
@@ -4575,6 +4576,8 @@ impl BoardApp {
                     {
                         entry.1 = pos;
                     }
+                    let board = self.screen_to_board(pos);
+                    let spacing = 1.0 / self.view_zoom.max(0.05);
                     if let Some(slot) = self
                         .select_touches
                         .iter_mut()
@@ -4603,11 +4606,28 @@ impl BoardApp {
                             drag.velocity = drag.velocity * 0.7 + (delta / dt) * 0.3;
                             drag.last = pos;
                             drag.last_time = ui.input(|i| i.time);
+                        } else if self.gesture.is_some()
+                            && let Some(gesture) = self.gesture.as_mut()
+                            && gesture.document == self.session.document.id
+                            && gesture.page == self.session.document.current_page().id
+                            && gesture.revision == self.session.document.revision
+                            && gesture.points.len() < 8000
+                            && gesture
+                                .points
+                                .last()
+                                .is_none_or(|p| (p.x - board.x).hypot(p.y - board.y) >= spacing)
+                        {
+                            // 触摸选择拖动：推进手势点。此前本分支直接 continue，
+                            // 手势只有起点，预览/提交均为零位移（选中却无法移动）。
+                            gesture.points.push(StrokePoint {
+                                x: board.x,
+                                y: board.y,
+                                time: ui.input(|i| i.time),
+                                pressure: 1.0,
+                            });
                         }
                         continue;
                     }
-                    let board = self.screen_to_board(pos);
-                    let spacing = 1.0 / self.view_zoom.max(0.05);
                     if let Some((_, gesture)) = self
                         .multi_gestures
                         .iter_mut()
