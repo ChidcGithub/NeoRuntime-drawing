@@ -1,6 +1,6 @@
 # Blackboard
 
-`neo-blackboard` is a multipage writing board with an opaque textured background, optional handwriting recognition, and limited mathematics. **Version 0.1.8**; binary packaging and cross-platform acceptance testing are not complete.
+`neo-blackboard` is a multipage writing board with an opaque textured background, optional handwriting recognition, and limited mathematics. **Version 0.1.13**; binary packaging and cross-platform acceptance testing are not complete.
 
 ## Build and run
 
