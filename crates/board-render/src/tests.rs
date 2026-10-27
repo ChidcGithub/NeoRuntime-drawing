@@ -2097,16 +2097,80 @@ fn wireframes_keep_topology_after_editing() {
     ] {
         let mut geometry = board_ink::shape_geometry(kind, p(0.0, 0.0), p(80.0, 80.0)).unwrap();
         geometry.vertices[0].x -= 4.0;
+        let edge_points: Vec<_> = geometry.vertices.clone();
         let obj = object(shape(kind, geometry.vertices));
         let mut scene = Scene::default();
         append_object(&mut scene, &obj).unwrap();
-        assert_eq!(scene.items.len(), geometry.edges.len());
+        // 拓扑不丢：所有段的端点都落在该形状的边上（Scene::line 会合并
+        // 共线连续段，逐边 1:1 断言与该合法优化冲突）。
+        let segments: Vec<(Pos2, Pos2)> = scene
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Primitive::Line(a, b, _, _) => Some((*a, *b)),
+                _ => None,
+            })
+            .collect();
+        assert!(!segments.is_empty());
+        for (s, e) in &segments {
+            let on_edge = geometry.edges.iter().any(|edge| {
+                let a = pos(edge_points[edge[0]]);
+                let b = pos(edge_points[edge[1]]);
+                segment_distance(*s, a, b) < 0.5 && segment_distance(*e, a, b) < 0.5
+            });
+            assert!(on_edge, "线段端点不在任何边上：{s:?} -> {e:?}");
+        }
+        // 被遮盖边以虚线渲染：隐边上的墨水长度明显小于隐边全长（有间隙）。
+        let hidden_len: f32 = geometry
+            .hidden
+            .iter()
+            .enumerate()
+            .filter(|(_, hidden)| **hidden)
+            .map(|(index, _)| {
+                let edge = &geometry.edges[index];
+                pos(edge_points[edge[0]]).distance(pos(edge_points[edge[1]]))
+            })
+            .sum();
+        let hidden_ink: f32 = segments
+            .iter()
+            .filter_map(|(s, e)| {
+                let length = s.distance(*e);
+                if length <= 0.0 {
+                    return None;
+                }
+                let on_hidden = geometry.hidden.iter().enumerate().any(|(index, hidden)| {
+                    if !*hidden {
+                        return false;
+                    }
+                    let edge = &geometry.edges[index];
+                    let a = pos(edge_points[edge[0]]);
+                    let b = pos(edge_points[edge[1]]);
+                    segment_distance(*s, a, b) < 0.5 && segment_distance(*e, a, b) < 0.5
+                });
+                if on_hidden { Some(length) } else { None }
+            })
+            .sum();
+        if hidden_len > 40.0 {
+            assert!(
+                hidden_ink < hidden_len - 8.0,
+                "隐边应呈虚线（有间隙）：墨水 {hidden_ink:.1} / 全长 {hidden_len:.1}"
+            );
+        }
     }
     let invalid = page(shape(
         ShapeKind::Cube,
         vec![p(0.0, 0.0), p(1.0, 1.0), p(2.0, 2.0)],
     ));
     assert!(export_svg(&invalid, 32, 32, false).is_err());
+}
+fn segment_distance(point: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let length2 = ab.length_sq();
+    if length2 < 1e-6 {
+        return point.distance(a);
+    }
+    let t = (((point.x - a.x) * ab.x + (point.y - a.y) * ab.y) / length2).clamp(0.0, 1.0);
+    point.distance(a + ab * t)
 }
 
 fn plot_page(expression: &str) -> Page {
@@ -2472,6 +2536,137 @@ fn implicit_plot_isolated_points_empty_sets_and_errors_are_explicit() {
             Err(RenderError::Math(_))
         ));
     }
+}
+
+#[test]
+fn coordinate_system_axes_use_axis_width_with_two_solid_arrows() {
+    let coordinate = |axis_width: Option<f32>, origin: Point| {
+        page(ObjectKind::CoordinateSystem {
+            origin,
+            scale: 20.0,
+            axis_width,
+            three_d: false,
+        })
+    };
+    // 旧对象（无字段）回退 1.5：两轴、两个实心箭头，无任何刻度/装饰项。
+    let legacy = page_scene(&coordinate(None, p(120.0, 120.0))).unwrap();
+    assert_eq!(
+        legacy
+            .items
+            .iter()
+            .filter(|item| matches!(item, Primitive::Line(..)))
+            .count(),
+        2
+    );
+    assert_eq!(
+        legacy
+            .items
+            .iter()
+            .filter(|item| matches!(item, Primitive::Triangle(..)))
+            .count(),
+        2
+    );
+    assert!(legacy.items.iter().all(|item| match item {
+        Primitive::Line(_, _, width, color) => *width == 1.5 && *color == AXIS_COLOR,
+        Primitive::Triangle(_, color) => *color == AXIS_COLOR,
+        _ => false,
+    }));
+
+    // axis_width=3.0：两轴宽度为 3，恰好两个箭头三角形，无刻度项。
+    let page = coordinate(Some(3.0), p(120.0, 120.0));
+    let scene = page_scene(&page).unwrap();
+    let lines: Vec<_> = scene
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Primitive::Line(a, b, width, color) => Some((*a, *b, *width, *color)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert!(
+        lines
+            .iter()
+            .all(|(_, _, width, color)| *width == 3.0 && *color == AXIS_COLOR)
+    );
+    assert!(
+        lines.iter().any(|(a, b, _, _)| {
+            *a == egui::pos2(20.0, 120.0) && *b == egui::pos2(220.0, 120.0)
+        })
+    );
+    assert!(
+        lines.iter().any(|(a, b, _, _)| {
+            *a == egui::pos2(120.0, 20.0) && *b == egui::pos2(120.0, 220.0)
+        })
+    );
+    assert!(
+        scene
+            .items
+            .iter()
+            .all(|item| !matches!(item, Primitive::Line(_, _, 1.0, _)))
+    );
+
+    // 箭头尺寸随轴宽：head = clamp(4.5w, 6, 36)，w=3 → 13.5，尖在轴端。
+    let triangles: Vec<_> = scene
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Primitive::Triangle(points, color) => Some((*points, *color)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(triangles.len(), 2);
+    assert!(triangles.iter().all(|(_, color)| *color == AXIS_COLOR));
+    let x_arrow = triangles
+        .iter()
+        .find(|(points, _)| points.contains(&egui::pos2(220.0, 120.0)))
+        .unwrap()
+        .0;
+    assert_eq!(x_arrow[1], egui::pos2(206.5, 113.25));
+    assert_eq!(x_arrow[2], egui::pos2(206.5, 126.75));
+    let y_arrow = triangles
+        .iter()
+        .find(|(points, _)| points.contains(&egui::pos2(120.0, 20.0)))
+        .unwrap()
+        .0;
+    assert_eq!(y_arrow[1], egui::pos2(113.25, 33.5));
+    assert_eq!(y_arrow[2], egui::pos2(126.75, 33.5));
+    assert!(scene.items.len() == 4, "坐标轴场景不应再有其他图元");
+
+    // 包围盒必须包含全部可见几何（线端点与箭头顶点）。
+    let mut drawn: Vec<Pos2> = Vec::new();
+    for (a, b, _, _) in &lines {
+        drawn.push(*a);
+        drawn.push(*b);
+    }
+    for (points, _) in &triangles {
+        drawn.extend(points.iter().copied());
+    }
+    let bounds = object_bounds(&page.objects[0]);
+    assert!(bounds.contains_rect(Rect::from_points(&drawn)));
+
+    // SVG 导出输出实心 polygon；PNG 导出不报错。
+    let svg = export_svg(&page, 240, 240, false).unwrap();
+    assert_eq!(svg.matches("<polygon").count(), 2);
+    export_png(&page, 240, 240, false).unwrap();
+
+    // 缩略图（网格批处理路径在三角形处断开）同样不丢图形。
+    let thumbnail = PageThumbnail::new(&page, ("doc", 1));
+    let ctx = egui::Context::default();
+    let target = Rect::from_min_size(Pos2::ZERO, egui::vec2(200.0, 200.0));
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        thumbnail
+            .paint(
+                ui.painter(),
+                target,
+                egui::vec2(240.0, 240.0),
+                false,
+                &NoResources,
+            )
+            .unwrap();
+    });
+    output.textures_delta.clear();
+    assert!(!output.shapes.is_empty());
 }
 
 #[test]
@@ -3971,5 +4166,35 @@ fn thumbnail_paint_with_bounds_tiny_content_keeps_finite_scale() {
     output.textures_delta.clear();
     for s in &output.shapes {
         assert!(s.clip_rect.intersects(target));
+    }
+}
+// 正方体透视：恰好远面底边、远面左边、左下深度棱三条被遮盖（虚线），
+// 其余九条边（含近面四边与三条可见深度棱）均为整段实线。
+#[test]
+fn cube_dashes_exactly_the_three_far_bottom_left_edges() {
+    let geometry = board_ink::shape_geometry(ShapeKind::Cube, p(0.0, 0.0), p(80.0, 80.0)).unwrap();
+    let obj = object(shape(ShapeKind::Cube, geometry.vertices.clone()));
+    let mut scene = Scene::default();
+    append_object(&mut scene, &obj).unwrap();
+    let segments: Vec<(Pos2, Pos2)> = scene
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Primitive::Line(a, b, _, _) => Some((*a, *b)),
+            _ => None,
+        })
+        .collect();
+    for (index, edge) in geometry.edges.iter().enumerate() {
+        let a = pos(geometry.vertices[edge[0]]);
+        let b = pos(geometry.vertices[edge[1]]);
+        let on_edge = segments
+            .iter()
+            .filter(|(s, e)| segment_distance(*s, a, b) < 0.5 && segment_distance(*e, a, b) < 0.5)
+            .count();
+        if index == 6 || index == 7 || index == 11 {
+            assert!(on_edge > 1, "被遮边 {index} 应为多段虚线");
+        } else {
+            assert_eq!(on_edge, 1, "可见边 {index} 应为一条整段实线");
+        }
     }
 }

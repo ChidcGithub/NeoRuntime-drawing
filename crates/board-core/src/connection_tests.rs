@@ -322,6 +322,8 @@ fn rejects_cross_page_nonshape_bbox_and_nonfinite_vertices() {
             kind: ObjectKind::CoordinateSystem {
                 origin: Point::default(),
                 scale: 1.0,
+                axis_width: None,
+                three_d: false,
             },
         },
         shape(

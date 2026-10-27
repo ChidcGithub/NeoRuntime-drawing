@@ -95,6 +95,8 @@ impl ImageResources for NoResources {
 enum Primitive {
     Stroke(std::sync::Arc<StrokeGeometry>),
     Line(Pos2, Pos2, f32, Color),
+    /// 实心三角形（坐标系箭头）；顶点须顺/逆时针一致，按凸多边形填充。
+    Triangle([Pos2; 3], Color),
     Disk(Pos2, f32, Color),
     Text(Pos2, String, f32, Color),
     Image(Rect, String),
@@ -400,9 +402,20 @@ impl Scene {
         }
         Ok(())
     }
+    fn triangle(&mut self, a: Pos2, b: Pos2, c: Pos2, color: Color) -> Result<()> {
+        self.push(Primitive::Triangle([a, b, c], color))
+    }
 }
 fn pos(p: Point) -> Pos2 {
     egui::pos2(p.x, p.y)
+}
+
+/// 坐标系轴线共用尺寸：（轴线宽，箭头长）。箭头尖在轴端、底边向内；
+/// 底边半宽为长度的一半。尺寸随轴宽缩放，并限幅避免极端笔宽产生巨大箭头。
+fn coordinate_axis_metrics(axis_width: Option<f32>) -> (f32, f32) {
+    let width = axis_width.unwrap_or(1.5);
+    let head = (4.5 * width).clamp(6.0, 36.0);
+    (width, head)
 }
 fn rgba(c: Color) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
@@ -471,7 +484,7 @@ fn validate_object(object: &BoardObject) -> Result<()> {
             height,
             ..
         } => rect_ok(*position, *width, *height),
-        ObjectKind::CoordinateSystem { origin, scale } => rect_ok(
+        ObjectKind::CoordinateSystem { origin, scale, .. } => rect_ok(
             Point {
                 x: origin.x - 5.0 * scale,
                 y: origin.y - 5.0 * scale,
@@ -992,16 +1005,27 @@ fn append_object(
             let g = geometry(*shape, points)?;
             let mut phase = 0.0;
             let mut previous = None;
-            for [a, b] in g.edges {
+            for (edge_index, edge) in g.edges.iter().enumerate() {
+                let [a, b] = *edge;
                 if previous != Some(a) {
                     phase = 0.0;
                 }
+                // 被遮盖的 3D 边渲染为虚线（与既有 Style.dashed 复用同一相位逻辑）。
+                let edge_style =
+                    if g.hidden.get(edge_index).copied().unwrap_or(false) && !style.dashed {
+                        Style {
+                            dashed: true,
+                            ..*style
+                        }
+                    } else {
+                        *style
+                    };
                 styled_line(
                     scene,
                     pos(g.vertices[a]),
                     pos(g.vertices[b]),
                     style.width,
-                    *style,
+                    edge_style,
                     &mut phase,
                 )?;
                 previous = Some(b);
@@ -1040,40 +1064,45 @@ fn append_object(
                 asset_ref.clone(),
             ))?;
         }
-        ObjectKind::CoordinateSystem { origin, scale } => {
+        ObjectKind::CoordinateSystem {
+            origin,
+            scale,
+            three_d,
+            axis_width,
+        } => {
             let o = pos(*origin);
             let r = 5.0 * scale;
-            scene.line(o - Vec2::X * r, o + Vec2::X * r, 1.5, AXIS_COLOR)?;
-            scene.line(o - Vec2::Y * r, o + Vec2::Y * r, 1.5, AXIS_COLOR)?;
-            for i in -5..=5 {
-                if i == 0 {
-                    continue;
-                }
-                let d = i as f32 * scale;
-                scene.line(
-                    o + egui::vec2(d, -3.0),
-                    o + egui::vec2(d, 3.0),
-                    1.0,
-                    AXIS_COLOR,
-                )?;
-                scene.line(
-                    o + egui::vec2(-3.0, d),
-                    o + egui::vec2(3.0, d),
-                    1.0,
-                    AXIS_COLOR,
-                )?;
-            }
-            for sign in [-1.0, 1.0] {
-                scene.line(
-                    o + egui::vec2(r, 0.0),
-                    o + egui::vec2(r - 7.0, sign * 4.0),
-                    1.5,
-                    AXIS_COLOR,
-                )?;
-                scene.line(
-                    o + egui::vec2(0.0, -r),
-                    o + egui::vec2(sign * 4.0, -r + 7.0),
-                    1.5,
+            let (width, head) = coordinate_axis_metrics(*axis_width);
+            scene.line(o - Vec2::X * r, o + Vec2::X * r, width, AXIS_COLOR)?;
+            scene.line(o - Vec2::Y * r, o + Vec2::Y * r, width, AXIS_COLOR)?;
+            // 只保留 x 正向、y 正向两个实心三角形箭头；刻度/数字等装饰已移除。
+            let base = head * 0.5;
+            scene.triangle(
+                o + egui::vec2(r, 0.0),
+                o + egui::vec2(r - head, -base),
+                o + egui::vec2(r - head, base),
+                AXIS_COLOR,
+            )?;
+            scene.triangle(
+                o + egui::vec2(0.0, -r),
+                o + egui::vec2(-base, -r + head),
+                o + egui::vec2(base, -r + head),
+                AXIS_COLOR,
+            )?;
+            if *three_d {
+                // 三维：深度轴（z）向屏幕右上 45°，长度 0.6r，同风格实心箭头。
+                let dir = egui::vec2(
+                    std::f32::consts::SQRT_2 / 2.0,
+                    -std::f32::consts::SQRT_2 / 2.0,
+                );
+                let tip = o + dir * (0.6 * r);
+                let perp = egui::vec2(-dir.y, dir.x);
+                scene.line(o, tip, width, AXIS_COLOR)?;
+                let base_center = tip - dir * head;
+                scene.triangle(
+                    tip,
+                    base_center + perp * (head * 0.5),
+                    base_center - perp * (head * 0.5),
                     AXIS_COLOR,
                 )?;
             }
@@ -1336,8 +1365,21 @@ pub fn object_bounds(object: &BoardObject) -> Rect {
             height,
             ..
         } => size_rect(*position, *width, *height).expand(1.0),
-        ObjectKind::CoordinateSystem { origin, scale } => {
-            Rect::from_center_size(pos(*origin), Vec2::splat(10.0 * scale)).expand(8.0)
+        ObjectKind::CoordinateSystem {
+            origin,
+            scale,
+            axis_width,
+            ..
+        } => {
+            let (width, head) = coordinate_axis_metrics(*axis_width);
+            let r = 5.0 * scale;
+            // 箭头尖在轴端、底边向内；超出轴盒的只有圆帽（宽/2）与极小
+            // scale 下反向越界的箭头底边，另留少量抗锯齿余量。
+            let overshoot = (width / 2.0)
+                .max(head - 2.0 * r)
+                .max(head * 0.5 - r)
+                .max(0.0);
+            Rect::from_center_size(pos(*origin), Vec2::splat(10.0 * scale)).expand(overshoot + 4.0)
         }
     }
 }
@@ -1661,6 +1703,16 @@ fn paint_scene_transformed(
                     radius * transform.scaling,
                     rgba(*color),
                 );
+            }
+            Primitive::Triangle(points, color) => {
+                let points: Vec<Pos2> = points.iter().map(|p| transform * *p).collect();
+                if painter.clip_rect().intersects(Rect::from_points(&points)) {
+                    painter.add(egui::Shape::convex_polygon(
+                        points,
+                        rgba(*color),
+                        egui::Stroke::NONE,
+                    ));
+                }
             }
             Primitive::Text(p, text, size, color) => {
                 let size = size * transform.scaling;
@@ -2648,6 +2700,20 @@ pub fn export_svg_with_resources(
                     f32::from(c.a) / 255.0
                 );
             }
+            Primitive::Triangle([a, b, c], color) => {
+                let _ = write!(
+                    output,
+                    "<polygon points=\"{},{} {},{} {},{}\" fill=\"{}\" fill-opacity=\"{}\"/>",
+                    a.x,
+                    a.y,
+                    b.x,
+                    b.y,
+                    c.x,
+                    c.y,
+                    svg_color(color),
+                    f32::from(color.a) / 255.0
+                );
+            }
             Primitive::Text(p, text, size, c) => {
                 if resources.font.is_some() {
                     svg_text(&mut output, p, &text, size, c, resources)?;
@@ -2860,6 +2926,7 @@ pub fn export_png_with_resources(
             }
             Primitive::Line(a, b, w, _) => Rect::from_two_pos(*a, *b).expand(*w / 2.0 + 1.0),
             Primitive::Disk(p, r, _) => Rect::from_center_size(*p, Vec2::splat(2.0 * r + 2.0)),
+            Primitive::Triangle(points, _) => Rect::from_points(points).expand(1.0),
         }
         .intersect(rect);
         if bounds.is_positive() {
@@ -2936,6 +3003,22 @@ pub fn export_png_with_resources(
                     pixmap.fill_path(
                         &path,
                         &raster_paint(c),
+                        tiny_skia::FillRule::Winding,
+                        tiny_skia::Transform::identity(),
+                        mask.as_ref(),
+                    );
+                }
+            }
+            Primitive::Triangle([a, b, c], color) => {
+                let mut path = tiny_skia::PathBuilder::new();
+                path.move_to(a.x, a.y);
+                path.line_to(b.x, b.y);
+                path.line_to(c.x, c.y);
+                path.close();
+                if let Some(path) = path.finish() {
+                    pixmap.fill_path(
+                        &path,
+                        &raster_paint(color),
                         tiny_skia::FillRule::Winding,
                         tiny_skia::Transform::identity(),
                         mask.as_ref(),

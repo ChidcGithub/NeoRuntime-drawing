@@ -614,3 +614,152 @@ fn touch_select_drag_commits_the_move() {
         "触摸拖动应提交 (100,80) 的位移"
     );
 }
+
+#[test]
+fn selected_coordinate_system_offers_three_d_toggle() {
+    // 选中坐标系：附近出现三维/二维切换按钮（登记为可点击控件）。
+    let (mut app, ctx) = plot_drag_app(vec![BoardObject {
+        id: "cs".into(),
+        kind: ObjectKind::CoordinateSystem {
+            origin: Point { x: 200.0, y: 200.0 },
+            scale: 20.0,
+            axis_width: None,
+            three_d: false,
+        },
+    }]);
+    let size = Vec2::new(800.0, 600.0);
+    // 切换按钮在 plot_controls（选中对象浮层），需与 canvas 同帧调用。
+    let ui_frame = |app: &mut BoardApp, ctx: &egui::Context| {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            app.plot_controls(ctx);
+            app.canvas(ui);
+        });
+        output.textures_delta.clear();
+        output
+    };
+    ui_frame(&mut app, &ctx);
+    app.selected = Some("cs".into());
+    ui_frame(&mut app, &ctx);
+    let near_button =
+        egui::Rect::from_center_size(Pos2::new(200.0, 170.0), Vec2::new(160.0, 60.0));
+    assert!(
+        app.controls.iter().any(|r| r.intersects(near_button)),
+        "选中坐标系应出现切换按钮：controls={:?}",
+        app.controls
+    );
+    // 三维状态下提供切回二维。
+    let mut toggled = app.session.document.current_page().objects[0].clone();
+    if let ObjectKind::CoordinateSystem { three_d, .. } = &mut toggled.kind {
+        *three_d = true;
+    }
+    app.apply(vec![Operation::Update { object: toggled }]);
+    ui_frame(&mut app, &ctx);
+    assert!(
+        app.controls.iter().any(|r| r.intersects(near_button)),
+        "翻转后切换按钮仍在"
+    );
+    assert!(matches!(
+        app.session.document.current_page().objects[0].kind,
+        ObjectKind::CoordinateSystem { three_d: true, .. }
+    ));
+}
+
+// 工具栏二级菜单展开时不阻塞画布：点击工具栏以外时收起菜单，且这一次
+// 按下照常落笔（菜单本身区域仍不响应画布）。
+#[test]
+fn toolbar_menu_does_not_block_canvas_and_closes_on_outside_press() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    let size = Vec2::new(800.0, 600.0);
+    frame(&mut app, &ctx, size, vec![], false);
+    // 模拟二级菜单已展开。
+    egui::Popup::open_id(&ctx, egui::Id::new("toolbar_secondary"));
+    assert!(egui::Popup::is_any_open(&ctx));
+    // 菜单展开时在画布起笔：不应被阻塞。
+    let start = Pos2::new(320.0, 300.0);
+    frame(&mut app, &ctx, size, vec![pointer(start, true)], false);
+    assert!(app.gesture.is_some(), "二级菜单展开时仍应能起笔");
+    // 同一次按下收起菜单（点击工具栏以外）。
+    assert!(!egui::Popup::is_any_open(&ctx), "点击工具栏以外应收起二级菜单");
+    // 继续拖动并抬手：笔画落盘。
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![pointer(Pos2::new(380.0, 320.0), true)],
+        false,
+    );
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![pointer(Pos2::new(380.0, 320.0), false)],
+        false,
+    );
+    assert_eq!(
+        app.session.document.current_page().objects.len(),
+        1,
+        "菜单收起后笔画应落盘"
+    );
+    // 菜单自身区域（登记为控件）按下时不落笔。
+    app.controls
+        .push(Rect::from_min_size(Pos2::new(600.0, 100.0), Vec2::new(120.0, 80.0)));
+    frame(
+        &mut app,
+        &ctx,
+        size,
+        vec![pointer(Pos2::new(650.0, 130.0), true)],
+        false,
+    );
+    assert!(app.gesture.is_none(), "菜单区域内按下不应起笔");
+    app.controls.clear();
+}
+
+// 坐标系一键绘图：轴线取当前笔宽×0.8（略细于笔），最细笔也被钳制到
+// 合法范围，不会因为 0.08 被核心校验拒绝而创建失败。
+#[test]
+fn coordinate_system_axes_follow_pen_width_even_at_thinnest_pen() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    let size = Vec2::new(800.0, 600.0);
+    let draw = |app: &mut BoardApp, ctx: &egui::Context, from: Pos2, to: Pos2| {
+        frame(app, ctx, size, vec![], false);
+        frame(app, ctx, size, vec![pointer(from, true)], false);
+        frame(app, ctx, size, vec![pointer(to, true)], false);
+        frame(app, ctx, size, vec![pointer(to, false)], false);
+    };
+    app.tool = Tool::Coordinates;
+    app.style.width = 4.0;
+    draw(&mut app, &ctx, Pos2::new(300.0, 300.0), Pos2::new(420.0, 300.0));
+    let objects = &app.session.document.current_page().objects;
+    assert_eq!(objects.len(), 1, "坐标系应创建成功");
+    match &objects[0].kind {
+        ObjectKind::CoordinateSystem {
+            axis_width, three_d, ..
+        } => {
+            assert!(!*three_d, "默认二维");
+            assert!(
+                (axis_width.expect("轴线宽度应记住笔宽") - 3.2).abs() < 1e-4,
+                "轴线 = 笔宽×0.8：{axis_width:?}"
+            );
+        }
+        other => panic!("期望坐标系：{other:?}"),
+    }
+    // 最细笔（0.1×0.8=0.08 会被核心拒绝）钳制到下限。
+    app.tool = Tool::Coordinates;
+    app.style.width = 0.1;
+    draw(&mut app, &ctx, Pos2::new(300.0, 450.0), Pos2::new(420.0, 450.0));
+    let objects = &app.session.document.current_page().objects;
+    assert_eq!(objects.len(), 2, "最细笔也应创建成功");
+    match &objects[1].kind {
+        ObjectKind::CoordinateSystem { axis_width, .. } => assert!(
+            (axis_width.expect("轴线宽度") - board_core::MIN_BRUSH_WIDTH).abs() < 1e-6,
+            "钳制到下限于：{axis_width:?}"
+        ),
+        other => panic!("期望坐标系：{other:?}"),
+    }
+}

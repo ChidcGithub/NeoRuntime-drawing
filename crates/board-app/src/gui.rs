@@ -4286,6 +4286,36 @@ impl BoardApp {
                         }
                     });
                 self.controls.push(area.response.rect);
+            } else if let ObjectKind::CoordinateSystem {
+                origin, three_d, ..
+            } = &object.kind
+            {
+                // 选中坐标系：一键切换三维/二维（与函数图复原按钮同构）。
+                let center = Pos2::new(
+                    origin.x * self.view_zoom + self.view_pan.x,
+                    origin.y * self.view_zoom + self.view_pan.y - 30.0,
+                );
+                let area = egui::Area::new(egui::Id::new(format!("coordinate_mode:{}", object.id)))
+                    .fixed_pos(center)
+                    .movable(false)
+                    .show(ctx, |ui| {
+                        if ui
+                            .button(if *three_d {
+                                "切换为二维"
+                            } else {
+                                "切换为三维"
+                            })
+                            .clicked()
+                        {
+                            let mut toggled = object.clone();
+                            if let ObjectKind::CoordinateSystem { three_d, .. } = &mut toggled.kind
+                            {
+                                *three_d = !*three_d;
+                            }
+                            self.apply(vec![Operation::Update { object: toggled }]);
+                        }
+                    });
+                self.controls.push(area.response.rect);
             } else {
                 self.plot_points = None;
             }
@@ -4346,8 +4376,13 @@ impl BoardApp {
             || self.confirm_close
             || self.authorization.is_some()
             || self.split_drag.is_some()
-            || egui::Popup::is_any_open(ui.ctx())
             || over_overlay;
+        // 工具栏二级菜单不阻塞画布：按在工具栏/菜单以外时，这一次按下既收起
+        // 菜单也照常落笔（菜单项自身的点击由 Popup 的 CloseOnClick 处理）。
+        if !over_overlay && ui.input(|i| i.pointer.any_pressed()) {
+            egui::Popup::close_all(ui.ctx());
+            self.armed_toolbar_menu = None;
+        }
         // 按页记忆视图：当前页与视图归属页不一致（本地翻页或宿主翻页）时存取切换。
         let current_page_id = self.session.document.current_page().id.clone();
         if self.view_page_id != current_page_id {
@@ -5377,6 +5412,12 @@ impl BoardApp {
             Tool::Coordinates => ObjectKind::CoordinateSystem {
                 origin: start,
                 scale: (end.x - start.x).abs().clamp(40.0, 200.0),
+                // 轴线匹配当前笔的粗细再细一点点。
+                axis_width: Some(
+                    (self.style.width * 0.8f32)
+                        .clamp(board_core::MIN_BRUSH_WIDTH, board_core::MAX_BRUSH_WIDTH),
+                ),
+                three_d: false,
             },
             Tool::Select => {
                 let mut object = gesture.original.clone()?;

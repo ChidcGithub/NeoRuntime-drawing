@@ -545,6 +545,7 @@ pub fn connection_hits_with_radius(
                 kind: *shape,
                 vertices: points.clone(),
                 edges,
+                hidden: Vec::new(),
             })
         };
         if let Some(geometry) = geometry
@@ -677,6 +678,7 @@ fn page_shape_segments(page: &Page, excluded: Option<&str>) -> Vec<(Point, Point
                 kind: *shape,
                 vertices: points.clone(),
                 edges,
+                hidden: Vec::new(),
             })
         };
         let Some(geometry) = geometry else { continue };

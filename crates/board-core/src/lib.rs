@@ -218,6 +218,12 @@ pub enum ObjectKind {
     CoordinateSystem {
         origin: Point,
         scale: f32,
+        /// 创建时抓取的轴线宽度（当前笔宽 × 0.8）；`None` 按旧版 1.5 渲染。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        axis_width: Option<f32>,
+        /// true = 三维坐标系（x/y/z 三轴斜投影）；默认 false = 二维。
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        three_d: bool,
     },
     FunctionPlot {
         position: Point,
@@ -419,8 +425,16 @@ impl BoardObject {
                         && positive(*height)
                         && !asset_ref.trim().is_empty()
                 }
-                ObjectKind::CoordinateSystem { origin, scale } => {
-                    finite_point(origin) && positive(*scale)
+                ObjectKind::CoordinateSystem {
+                    origin,
+                    scale,
+                    axis_width,
+                    ..
+                } => {
+                    finite_point(origin)
+                        && positive(*scale)
+                        && axis_width
+                            .is_none_or(|w| (MIN_BRUSH_WIDTH..=MAX_BRUSH_WIDTH).contains(&w))
                 }
                 ObjectKind::FunctionPlot {
                     position,

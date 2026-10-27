@@ -723,6 +723,8 @@ fn all_object_variants_round_trip() {
         ObjectKind::CoordinateSystem {
             origin,
             scale: 10.0,
+            axis_width: None,
+            three_d: false,
         },
         ObjectKind::FunctionPlot {
             position: origin,
@@ -752,6 +754,71 @@ fn all_object_variants_round_trip() {
         Document::from_json(&document.to_json().unwrap()).unwrap(),
         document
     );
+}
+
+#[test]
+fn coordinate_system_axis_width_defaults_and_validation() {
+    // 旧文档无 axis_width：缺省读为 None。
+    let json = r#"{"version":1,"document":{"id":"doc","current_page":0,"revision":0,"pages":[{"id":"p","objects":[{"id":"c","kind":{"type":"coordinate_system","origin":{"x":0.0,"y":0.0},"scale":10.0}}]}]}}"#;
+    let document = from_json(json).unwrap();
+    assert!(matches!(
+        &document.current_page().objects[0].kind,
+        ObjectKind::CoordinateSystem {
+            axis_width: None,
+            ..
+        }
+    ));
+
+    // 未显式设宽度时保持旧文件形状：axis_width 省略、仍为最小版本 1。
+    let mut document = Document::new();
+    document.pages[0].objects.push(BoardObject {
+        id: "c".into(),
+        kind: ObjectKind::CoordinateSystem {
+            origin: Point::default(),
+            scale: 10.0,
+            axis_width: None,
+            three_d: false,
+        },
+    });
+    assert_eq!(document.file_version(), 1);
+    let json = document.to_json().unwrap();
+    assert!(!json.contains("axis_width"));
+    assert_eq!(from_json(&json).unwrap(), document);
+
+    // 显式宽度同样以最小版本 1 往返。
+    let wide = ObjectKind::CoordinateSystem {
+        origin: Point::default(),
+        scale: 10.0,
+        axis_width: Some(3.0),
+        three_d: false,
+    };
+    BoardObject {
+        id: "c".into(),
+        kind: wide.clone(),
+    }
+    .validate()
+    .unwrap();
+    document.pages[0].objects[0].kind = wide;
+    let json = document.to_json().unwrap();
+    assert_eq!(document.file_version(), 1);
+    assert_eq!(from_json(&json).unwrap(), document);
+
+    // 超出笔宽范围的轴宽与任意非法样式一样被拒。
+    for width in [0.0, 0.05, f32::NAN, 1000.0] {
+        assert!(
+            BoardObject {
+                id: "c".into(),
+                kind: ObjectKind::CoordinateSystem {
+                    origin: Point::default(),
+                    scale: 10.0,
+                    axis_width: Some(width),
+                    three_d: false,
+                }
+            }
+            .validate()
+            .is_err()
+        );
+    }
 }
 
 #[test]
@@ -792,6 +859,8 @@ fn non_stroke_validation_checks_geometry_and_ranges() {
         ObjectKind::CoordinateSystem {
             origin: Point::default(),
             scale: 0.0,
+            axis_width: None,
+            three_d: false,
         },
         ObjectKind::FunctionPlot {
             position: Point::default(),

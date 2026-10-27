@@ -781,6 +781,9 @@ pub struct ShapeGeometry {
     pub kind: ShapeKind,
     pub vertices: Vec<Point>,
     pub edges: Vec<[usize; 2]>,
+    /// 与 edges 平行的被遮盖（背面/远侧）标记：true 渲染为虚线。
+    /// 2D 形状为空表（视为全部可见）；3D 形状由固定投影确定性派生。
+    pub hidden: Vec<bool>,
 }
 
 fn polygon(geometry: &mut ShapeGeometry, points: &[Point], closed: bool) {
@@ -819,6 +822,7 @@ pub fn shape_geometry(
         kind,
         vertices: vec![],
         edges: vec![],
+        hidden: vec![],
     };
     use ShapeKind::*;
     if kind == Line {
@@ -909,6 +913,27 @@ pub fn shape_geometry(
             ellipse(&mut geometry, x + w / 2.0, y + h / 2.0, w * 0.15, h / 2.0);
         }
     }
+    // 3D 图形被遮盖（背面/远侧）的边标记为隐藏，渲染为虚线。投影方向固定，
+    // 可见性由形状种类与边序确定性派生；2D 形状 hidden 保持为空（全部可见）。
+    geometry.hidden = match kind {
+        // 斜投影：第一多边形（顶点 0..3）是近面（左下），第二多边形（4..7）
+        // 是远面（向右上偏移），深度棱向右上——教科书画法看到顶面与右面。
+        // 被遮盖的是远面左下角出发的三条棱：远面底边（6）、远面左边（7）、
+        // 近面左下角到远面左下角的深度棱（11）。
+        Cube | Cuboid => (0..geometry.edges.len())
+            .map(|i| matches!(i, 6 | 7 | 11))
+            .collect(),
+        Cylinder => (0..geometry.edges.len())
+            .map(|i| (96..=127).contains(&i))
+            .collect(),
+        Cone => (0..geometry.edges.len())
+            .map(|i| (32..=63).contains(&i))
+            .collect(),
+        Sphere => (0..geometry.edges.len())
+            .map(|i| (96..=127).contains(&i) || (144..=175).contains(&i))
+            .collect(),
+        _ => Vec::new(),
+    };
     check_points(&geometry.vertices)?;
     Ok(geometry)
 }

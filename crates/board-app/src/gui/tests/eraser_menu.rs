@@ -23,6 +23,8 @@ fn eraser_page_fixture() -> BoardApp {
     app.add(ObjectKind::CoordinateSystem {
         origin: Point { x: 500.0, y: 180.0 },
         scale: 20.0,
+        axis_width: None,
+        three_d: false,
     });
     app.add(drag_plot("plot", 600.0, &["x"]).kind);
     let mut shapes = reverse_drag_objects();

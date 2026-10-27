@@ -325,7 +325,9 @@ fn missing_characters_return_whole_result_error_not_fake_ink() {
             .render(
                 &ObjectKind::CoordinateSystem {
                     origin: Point::default(),
-                    scale: 1.0
+                    scale: 1.0,
+                    axis_width: None,
+                    three_d: false,
                 },
                 "x"
             )

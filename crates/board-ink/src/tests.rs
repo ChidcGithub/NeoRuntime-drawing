@@ -1247,3 +1247,47 @@ fn thirty_minute_sampling_workload() {
         clock.elapsed()
     );
 }
+
+// 3D 图形被遮盖边的可见性规则（固定斜投影下的教科书约定）。
+#[test]
+fn hidden_edges_follow_canonical_projection_rules() {
+    use ShapeKind::*;
+    // 二维形状：无隐边。
+    for kind in [Rectangle, Triangle, Ellipse, Line] {
+        let g = shape_geometry(kind, Point::default(), Point { x: 80.0, y: 80.0 }).unwrap();
+        assert!(g.hidden.iter().all(|hidden| !hidden), "{kind:?} 不应有隐边");
+    }
+    // 正方体：12 条边，恰远面（右上）底边、左边与左下深度棱 3 条被遮
+    // （近面 = 左下，深度棱向右上，看到顶面与右面）。
+    let cube = shape_geometry(Cube, Point::default(), Point { x: 80.0, y: 80.0 }).unwrap();
+    assert_eq!(cube.edges.len(), 12);
+    assert_eq!(cube.hidden.len(), 12);
+    assert_eq!(cube.hidden.iter().filter(|hidden| **hidden).count(), 3);
+    // 被遮棱的端点：远面底边 (80,60)-(20,60)、远面左边 (20,60)-(20,0)、
+    // 深度棱 (0,80)-(20,60)；近面四边与右上进深度棱全部可见。
+    assert_eq!(cube.edges[6], [6, 7]);
+    assert_eq!(cube.edges[7], [7, 4]);
+    assert_eq!(cube.edges[11], [3, 7]);
+    assert_eq!(cube.vertices[7], Point { x: 20.0, y: 60.0 });
+    assert_eq!(cube.vertices[3], Point { x: 0.0, y: 80.0 });
+    for (index, hidden) in cube.hidden.iter().enumerate() {
+        if !matches!(index, 6 | 7 | 11) {
+            assert!(!hidden, "边 {index} 不应被遮");
+        }
+    }
+    // 圆柱：恰下椭圆远半 32 段被遮。
+    let cylinder = shape_geometry(Cylinder, Point::default(), Point { x: 80.0, y: 80.0 }).unwrap();
+    assert_eq!(cylinder.edges.len(), 130);
+    assert_eq!(cylinder.hidden.iter().filter(|hidden| **hidden).count(), 32);
+    // 圆锥：恰底椭圆远半 32 段被遮。
+    let cone = shape_geometry(Cone, Point::default(), Point { x: 80.0, y: 80.0 }).unwrap();
+    assert_eq!(cone.edges.len(), 66);
+    assert_eq!(cone.hidden.iter().filter(|hidden| **hidden).count(), 32);
+    // 球：赤道与子午线各半共 64 段被遮。
+    let sphere = shape_geometry(Sphere, Point::default(), Point { x: 80.0, y: 80.0 }).unwrap();
+    assert_eq!(sphere.edges.len(), 192);
+    assert_eq!(sphere.hidden.iter().filter(|hidden| **hidden).count(), 64);
+    // 反向拖拽（包围框归一）后规则不变。
+    let flipped = shape_geometry(Cube, Point { x: 80.0, y: 80.0 }, Point::default()).unwrap();
+    assert_eq!(flipped.hidden.iter().filter(|hidden| **hidden).count(), 3);
+}
