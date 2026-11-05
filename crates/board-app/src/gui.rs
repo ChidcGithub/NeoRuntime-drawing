@@ -3555,7 +3555,7 @@ impl BoardApp {
                     }
                     if ui.text_edit_singleline(&mut self.expression).changed() { self.cancel_math(); self.hwr_worker.cancel(); }
                     if self.math_worker.busy() && ui.button("取消后台计算（不写回）").clicked() { self.cancel_math(); self.math_result = "已取消；旧工作排空前不启动新任务".into(); }
-                    ui.label("二元二次求解仅给范围内数值候选，不保证全解。")
+                    ui.label("方程组经结式消元在范围内完备求解，重合曲线单独提示。")
                         .on_hover_text("两式用英文分号分隔；每式仅支持总次数 ≤2 的 x/y 多项式。未找到候选不等于无解。");
                     ui.horizontal(|ui| {
                         ui.label("x 范围 / 积分上下限");
@@ -3586,7 +3586,7 @@ impl BoardApp {
                         .on_hover_text("请输入 f(x) 表达式，而非等式。");
                     ui.collapsing("数学语法与限制", |ui| {
                         ui.label("输入后点击计算：simplify(x+1=2)、diff(x^3,x)、integrate(3*x^2,x)。");
-                        ui.label("符号运算仅支持有限 x/y 多项式；原函数积分常数取 0，不表示完整通解。");
+                        ui.label("符号引擎支持初等函数求导、标准形积分与方程求解；积分常数取 0。");
                         ui.small("数学任务单槽无排队；默认数值预算512网格/30000次求值/500万词元计算。取消只丢弃结果，旧工作排空前不再启动；不承诺硬实时截止。");
                     });
                     ui.horizontal(|ui| {

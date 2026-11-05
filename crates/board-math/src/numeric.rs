@@ -446,9 +446,9 @@ pub struct SystemSearch {
     /// 网格 Newton 中没有满足残差/步长条件的种子数量。
     pub unconverged_seeds: usize,
 }
-/// 总次数 <=2 的两式，在矩形内多起点阻尼 Newton，非全解算法。
-/// 每轴最多 33 个种子，每种子最多 48 轮、每轮最多 8 次回溯；O(种子²*48*8)，
-/// 受 max_evaluations 约束。退化线性系统走解析接口，共同曲线可能只得到部分点。
+/// 总次数 ≤ 2 的两式在矩形内求全部交点：结式消元化为一元多项式，实根由符号
+/// 引擎完备隔离（不再依赖采样与 Newton 收敛运气），再回代求 y；线性系统走
+/// 解析接口。重合或含公共曲线成分的系统不能枚举为点集，返回 Unsupported。
 pub fn solve_quadratic_system(
     first: &str,
     second: &str,
@@ -496,67 +496,33 @@ pub fn solve_quadratic_system(
         ));
     }
     let mut budget = Budget::new(o, 12);
+    // 结式消元：两式视为 y 的多项式，Sylvester 结式是 x 的一元多项式，
+    // 其实根恰为存在公共 y 解的 x；回代后取两式在该 x 处的公共 y 根。
+    let resultant = sylvester_resultant(&p, &q)?;
+    budget.take()?;
+    let x_poly = cleaned(resultant)?
+        .into_iter()
+        .map(super::symbolic::Rat::from_f64)
+        .collect::<Result<Vec<_>>>()?;
+    let x_roots = super::symbolic::real_roots(&super::symbolic::Poly::from_coefficients(x_poly))?;
     let mut points: Vec<Point> = Vec::new();
-    let mut failed = 0;
-    let side = ((o.steps as f64).sqrt() as usize).clamp(3, 32);
-    let step_tol = (o.tolerance * 0.1).max(1e-10);
-    for i in 0..=side {
-        for j in 0..=side {
-            let mut x = bounds.x_min + (bounds.x_max - bounds.x_min) * i as f64 / side as f64;
-            let mut y = bounds.y_min + (bounds.y_max - bounds.y_min) * j as f64 / side as f64;
-            let mut converged = false;
-            for _ in 0..48 {
-                budget.take()?;
-                let f = p.eval(x, y)?;
-                let g = q.eval(x, y)?;
-                if f == 0.0 && g == 0.0 {
-                    converged = true;
-                    break;
-                }
-                let (a, b) = p.gradient(x, y);
-                let (c, d) = q.gradient(x, y);
-                let det = a * d - b * c;
-                if det == 0.0 || !det.is_finite() {
-                    break;
-                }
-                let dx = (d * f - b * g) / det;
-                let dy = (a * g - c * f) / det;
-                if !dx.is_finite() || !dy.is_finite() {
-                    break;
-                }
-                if dx.abs().max(dy.abs()) <= step_tol && f.abs().max(g.abs()) <= o.tolerance {
-                    converged = true;
-                    break;
-                }
-                let mut moved = false;
-                let mut damping = 1.0;
-                for _ in 0..8 {
-                    let nx = x - damping * dx;
-                    let ny = y - damping * dy;
-                    if inside(bounds, nx, ny) {
-                        budget.take()?;
-                        if p.eval(nx, ny)?.abs().max(q.eval(nx, ny)?.abs()) < f.abs().max(g.abs()) {
-                            x = nx;
-                            y = ny;
-                            moved = true;
-                            break;
-                        }
-                    }
-                    damping *= 0.5;
-                }
-                if !moved {
-                    break;
-                }
-            }
-            if converged {
-                if !points
+    for x in x_roots {
+        budget.take()?;
+        let py = y_slice(&p, x)?;
+        let qy = y_slice(&q, x)?;
+        // 退化：某个 x 上两式同时恒零 → 公共线成分，无法枚举离散点。
+        if py.iter().all(|v| v.abs() <= o.tolerance) && qy.iter().all(|v| v.abs() <= o.tolerance) {
+            return Err(MathError::Unsupported(
+                "系统含公共曲线成分，不能枚举为点集".into(),
+            ));
+        }
+        for y in common_roots(&py, &qy, o.tolerance) {
+            if inside(bounds, x, y)
+                && !points
                     .iter()
-                    .any(|p| (p.x - x).hypot(p.y - y) < step_tol * 16.0)
-                {
-                    points.push(Point { x, y });
-                }
-            } else {
-                failed += 1;
+                    .any(|p| (p.x - x).hypot(p.y - y) < o.tolerance * 16.0)
+            {
+                points.push(Point { x, y });
             }
         }
     }
@@ -564,9 +530,196 @@ pub fn solve_quadratic_system(
     Ok(SystemSearch {
         points,
         bounds,
-        complete: false,
-        unconverged_seeds: failed,
+        complete: true,
+        unconverged_seeds: 0,
     })
+}
+
+/// y^j 的系数是 x 的多项式：layers[j][i] = x^i·y^j 的系数（总次数 ≤ 2）。
+fn y_layers(p: &algebra::Polynomial) -> [[f64; 3]; 3] {
+    let mut layers = [[0.0_f64; 3]; 3];
+    for (j, row) in layers.iter_mut().enumerate() {
+        for (i, cell) in row.iter_mut().enumerate() {
+            *cell = p.coefficient(i as u8, j as u8);
+        }
+    }
+    layers
+}
+
+/// Sylvester 结式：把 p、q 视为 y 的多项式，返回 x 的一元多项式系数
+/// （下标 = x 次数）。两式有公共成分时结式恒为零，由 cleaned 拦截。
+fn sylvester_resultant(p: &algebra::Polynomial, q: &algebra::Polynomial) -> Result<Vec<f64>> {
+    let a = y_layers(p);
+    let b = y_layers(q);
+    let da = (0..3)
+        .rev()
+        .find(|&j| a[j].iter().any(|c| *c != 0.0))
+        .ok_or_else(|| MathError::Unsupported("方程退化为恒等式".into()))?;
+    let db = (0..3)
+        .rev()
+        .find(|&j| b[j].iter().any(|c| *c != 0.0))
+        .ok_or_else(|| MathError::Unsupported("方程退化为恒等式".into()))?;
+    let size = da + db;
+    let mut matrix = vec![vec![Vec::new(); size]; size];
+    for row in 0..db {
+        for col in 0..size {
+            let shift = col as isize - row as isize;
+            let index = da as isize - shift;
+            if (0..=da as isize).contains(&index) {
+                matrix[row][col] = a[index as usize].to_vec();
+            }
+        }
+    }
+    for row in db..size {
+        let r = row - db;
+        for col in 0..size {
+            let shift = col as isize - r as isize;
+            let index = db as isize - shift;
+            if (0..=db as isize).contains(&index) {
+                matrix[row][col] = b[index as usize].to_vec();
+            }
+        }
+    }
+    poly_determinant(&matrix)
+}
+
+/// 多项式行列式（元素为 x 的系数向量，规模 ≤ 4，按余子式展开）。
+fn poly_determinant(matrix: &[Vec<Vec<f64>>]) -> Result<Vec<f64>> {
+    if matrix.len() == 1 {
+        return Ok(matrix[0][0].clone());
+    }
+    let mut total = vec![0.0];
+    for col in 0..matrix.len() {
+        let mut minor = Vec::with_capacity(matrix.len() - 1);
+        for row in 1..matrix.len() {
+            let mut r = Vec::with_capacity(matrix.len() - 1);
+            for (c, cell) in matrix[row].iter().enumerate() {
+                if c != col {
+                    r.push(cell.clone());
+                }
+            }
+            minor.push(r);
+        }
+        let term = poly_mul(&matrix[0][col], &poly_determinant(&minor)?)?;
+        let signed = if col % 2 == 0 { term } else { poly_neg(&term) };
+        total = poly_add(&total, &signed);
+    }
+    Ok(total)
+}
+
+fn poly_add(a: &[f64], b: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0; a.len().max(b.len())];
+    for (i, v) in out.iter_mut().enumerate() {
+        *v = a.get(i).copied().unwrap_or(0.0) + b.get(i).copied().unwrap_or(0.0);
+    }
+    out
+}
+
+fn poly_neg(a: &[f64]) -> Vec<f64> {
+    a.iter().map(|v| -v).collect()
+}
+
+fn poly_mul(a: &[f64], b: &[f64]) -> Result<Vec<f64>> {
+    if a.is_empty() || b.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = vec![0.0; a.len() + b.len() - 1];
+    for (i, &x) in a.iter().enumerate() {
+        for (j, &y) in b.iter().enumerate() {
+            out[i + j] += x * y;
+        }
+    }
+    Ok(out)
+}
+
+/// 去掉结式的数值噪声：相对幅值 1e-10 以下的系数视为零并裁掉尾部零项；
+/// 结式恒为零说明两式有公共成分，无法枚举离散解。
+fn cleaned(mut poly: Vec<f64>) -> Result<Vec<f64>> {
+    if poly.iter().any(|v| !v.is_finite()) {
+        return Err(MathError::Numerical("结式系数溢出".into()));
+    }
+    let max = poly.iter().fold(0.0_f64, |acc, v| acc.max(v.abs()));
+    if max == 0.0 {
+        return Err(MathError::Unsupported(
+            "两式有公共成分，不能枚举离散解".into(),
+        ));
+    }
+    for v in poly.iter_mut() {
+        if v.abs() < max * 1e-10 {
+            *v = 0.0;
+        }
+    }
+    while poly.last().is_some_and(|v| *v == 0.0) {
+        poly.pop();
+    }
+    if poly.is_empty() {
+        return Err(MathError::Unsupported(
+            "两式有公共成分，不能枚举离散解".into(),
+        ));
+    }
+    Ok(poly)
+}
+
+/// 固定 x 后两式关于 y 的系数（Horner 求值 x 部分）。
+fn y_slice(p: &algebra::Polynomial, x: f64) -> Result<[f64; 3]> {
+    let mut out = [0.0_f64; 3];
+    let layers = y_layers(p);
+    for (j, row) in layers.iter().enumerate() {
+        let mut acc = 0.0;
+        for c in row.iter().rev() {
+            acc = acc * x + c;
+        }
+        if !acc.is_finite() {
+            return Err(MathError::Numerical("回代求值溢出".into()));
+        }
+        out[j] = acc;
+    }
+    Ok(out)
+}
+
+/// 固定 x 处两式的公共 y 根：两式各自根的并集中，残差都在容差内的点。
+fn common_roots(py: &[f64; 3], qy: &[f64; 3], tolerance: f64) -> Vec<f64> {
+    let mut candidates = Vec::new();
+    candidates.extend(quadratic_roots(py));
+    candidates.extend(quadratic_roots(qy));
+    candidates.sort_by(f64::total_cmp);
+    candidates.dedup_by(|a, b| (*a - *b).abs() <= tolerance.max(1e-9) * 16.0);
+    candidates
+        .into_iter()
+        .filter(|y| eval_y(py, *y).abs() <= tolerance && eval_y(qy, *y).abs() <= tolerance)
+        .collect()
+}
+
+fn eval_y(coefficients: &[f64; 3], y: f64) -> f64 {
+    (coefficients[2] * y + coefficients[1]) * y + coefficients[0]
+}
+
+/// 稳定二次求根（归一化 + q 公式，与代数路径同风格）；退化自动降次。
+fn quadratic_roots(coefficients: &[f64; 3]) -> Vec<f64> {
+    let (a, b, c) = (coefficients[2], coefficients[1], coefficients[0]);
+    let scale = a.abs().max(b.abs()).max(c.abs());
+    if !(scale > 0.0) || !scale.is_finite() {
+        return Vec::new();
+    }
+    let (a, b, c) = (a / scale, b / scale, c / scale);
+    if a.abs() < 1e-12 {
+        if b.abs() < 1e-12 {
+            return Vec::new();
+        }
+        return vec![-c / b];
+    }
+    let d = b * b - 4.0 * a * c;
+    if d < 0.0 {
+        return Vec::new();
+    }
+    if d == 0.0 {
+        return vec![-b / (2.0 * a)];
+    }
+    let s = d.sqrt();
+    let q = -0.5 * (b + s.copysign(b));
+    let mut values = vec![q / a, c / q];
+    values.sort_by(f64::total_cmp);
+    values
 }
 fn inside(b: Bounds2D, x: f64, y: f64) -> bool {
     x >= b.x_min && x <= b.x_max && y >= b.y_min && y <= b.y_max

@@ -1,4 +1,7 @@
-use super::{MathError, Node, Op, Result, finite, normalize, parse};
+use super::symbolic::{
+    Poly, Rat, Sym, add_terms, mul_terms, rational_function, real_roots, sym_from_node,
+};
+use super::{Function, MathError, Node, Op, Result, finite, normalize, parse};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -189,18 +192,6 @@ impl Polynomial {
         }
         Ok(out)
     }
-    pub(crate) fn gradient(&self, x: f64, y: f64) -> (f64, f64) {
-        let (mut dx, mut dy) = (0.0, 0.0);
-        for (&(i, j), &c) in &self.terms {
-            if i > 0 {
-                dx += c * i as f64 * x.powi(i as i32 - 1) * y.powi(j as i32);
-            }
-            if j > 0 {
-                dy += c * j as f64 * x.powi(i as i32) * y.powi(j as i32 - 1);
-            }
-        }
-        (dx, dy)
-    }
 }
 impl fmt::Display for Polynomial {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -308,20 +299,322 @@ pub enum Solutions {
     None,
     Infinite,
     Finite(Vec<f64>),
+    /// 标准超越方程的解族（如 "x = 0.5235987755982988 + 2πk"），已按周期去重。
+    Families(Vec<String>),
 }
-/// 求一元 x 一次/二次方程的实根；退化为恒等式或矛盾式时分别返回 Infinite/None。
+/// 方程定义域：分母与非正整数次幂底数的零点，从解集中排除（增根/无定义点）。
+enum Domain {
+    All,
+    Points(Vec<f64>),
+    /// 含函数符号的分母等，无法枚举排除点。
+    Unknown,
+}
+
+fn unsupported_form() -> MathError {
+    MathError::Unsupported("解析求解仅支持变量 x 的方程（多项式、分式）与标准超越形".into())
+}
+
+/// 求一元 x 方程的实根：一次/二次沿用稳定数值公式（输出与既有实现一致）；
+/// 更高次与分式方程走符号引擎（精确有理根 + 完备实根隔离，增根按定义域排除）；
+/// 标准超越方程 a·f(b·x+c)+d=0 给出解族。恒等式/矛盾式分别返回 Infinite/None；
+/// 解为「除个别点外全部实数」时保持定义域哲学，返回 Unsupported 而不是宣称任意实数均为解。
 pub fn solve_equation(input: &str) -> Result<Solutions> {
-    let p = equation(input)?;
-    if p.degree() > 2 || p.terms.keys().any(|(_, j)| *j != 0) {
-        return Err(MathError::Unsupported(
-            "解析求解仅支持变量 x 的一次/二次方程".into(),
-        ));
+    let input = normalize(input)?;
+    super::statement_budget(&input, 0)?;
+    let (left, right) = equation_parts(&input)?;
+    // 低次多项式快路径：输出与既有实现一致；分式/含函数的 Unsupported 落到符号引擎。
+    match polynomial_solutions(left, right) {
+        Ok(Some(solutions)) => return Ok(solutions),
+        Ok(None) => {}
+        Err(MathError::Unsupported(_)) => {}
+        Err(e) => return Err(e),
     }
-    quadratic(
+    let mut exclusions = Domain::All;
+    collect_exclusions(&parse(left)?.node, &mut exclusions)?;
+    collect_exclusions(&parse(right)?.node, &mut exclusions)?;
+    let combined = add_terms(vec![
+        sym_from_node(&parse(left)?.node)?,
+        mul_terms(vec![
+            Sym::Rat(Rat::new(-1, 1)?),
+            sym_from_node(&parse(right)?.node)?,
+        ])?,
+    ])?;
+    match rational_function(&combined, 'x')? {
+        Some((num, den)) => rational_solutions(num, den, &exclusions),
+        None => transcendental(&combined),
+    }
+}
+
+fn equation_parts(input: &str) -> Result<(&str, &str)> {
+    let mut parts = input.split('=');
+    let left = parts.next().unwrap_or("");
+    let right = parts
+        .next()
+        .ok_or_else(|| MathError::Syntax("方程必须含一个等号".into()))?;
+    if parts.next().is_some() {
+        return Err(MathError::Syntax("方程只能含一个等号".into()));
+    }
+    Ok((left, right))
+}
+
+/// 低次快路径：纯 x 的 1/2 次多项式；更高次或含 y 返回 None（交符号引擎）；
+/// 分式/含函数保持 Polynomial 路径的 Unsupported（由调用方落到符号引擎）。
+fn polynomial_solutions(left: &str, right: &str) -> Result<Option<Solutions>> {
+    let p = Polynomial::parse(left)?.add(&Polynomial::parse(right)?, -1.0)?;
+    if p.degree() > 2 || p.terms.keys().any(|(_, j)| *j != 0) {
+        return Ok(None);
+    }
+    Ok(Some(quadratic(
         p.coefficient(2, 0),
         p.coefficient(1, 0),
         p.coefficient(0, 0),
+    )?))
+}
+
+/// 有理方程 num/den = 0：约去公因子后解 num = 0，分母零点与定义域排除点剔除。
+fn rational_solutions(num: Poly, den: Poly, exclusions: &Domain) -> Result<Solutions> {
+    let g = num.gcd(&den)?;
+    let num = if g.is_zero() { num } else { num.divmod(&g)?.0 };
+    if num.is_zero() {
+        return match exclusions {
+            Domain::All => Ok(Solutions::Infinite),
+            Domain::Points(_) | Domain::Unknown => Err(MathError::Unsupported(
+                "方程在个别点无定义，恒成立但不能宣称任意实数均为解".into(),
+            )),
+        };
+    }
+    let mut values = real_roots(&num)?;
+    if den.degree() > 0 {
+        let den_roots = real_roots(&den)?;
+        values.retain(|x| {
+            !den_roots
+                .iter()
+                .any(|y| (x - y).abs() < 1e-9 * x.abs().max(1.0))
+        });
+    }
+    if let Domain::Points(excluded) = exclusions {
+        values.retain(|x| {
+            !excluded
+                .iter()
+                .any(|y| (x - y).abs() < 1e-9 * x.abs().max(1.0))
+        });
+    }
+    Ok(if values.is_empty() {
+        Solutions::None
+    } else {
+        Solutions::Finite(values)
+    })
+}
+
+/// 递归收集方程两侧的定义域排除点：分母与非正整数次幂底数的零点。
+fn collect_exclusions(node: &Node, out: &mut Domain) -> Result<()> {
+    match node {
+        Node::Binary(Op::Div, _, denominator) => {
+            exclude_base(denominator, out)?;
+            collect_exclusions(denominator, out)?;
+        }
+        Node::Binary(Op::Pow, base, exponent) => {
+            // 非正整数次幂：底数零点无定义（0^0、0 的负次幂）。
+            if let Node::Number(v) = &**exponent {
+                if *v <= 0.0 && v.fract() == 0.0 {
+                    exclude_base(base, out)?;
+                }
+            }
+            collect_exclusions(base, out)?;
+        }
+        Node::Binary(_, a, b) => {
+            collect_exclusions(a, out)?;
+            collect_exclusions(b, out)?;
+        }
+        Node::Neg(n) => collect_exclusions(n, out)?,
+        Node::Call(_, a) => collect_exclusions(a, out)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// 一个分母/底数子表达式为零与无定义的点；含函数符号等无法枚举时标记 Unknown。
+fn exclude_base(node: &Node, out: &mut Domain) -> Result<()> {
+    if matches!(out, Domain::Unknown) {
+        return Ok(());
+    }
+    let sym = match sym_from_node(node) {
+        Ok(s) => s,
+        Err(MathError::Unsupported(_) | MathError::Limit(_)) => {
+            *out = Domain::Unknown;
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+    match rational_function(&sym, 'x')? {
+        Some((num, den)) if !num.is_zero() => {
+            let g = num.gcd(&den)?;
+            let reduced = if g.is_zero() { num } else { num.divmod(&g)?.0 };
+            let mut roots = if reduced.is_zero() {
+                Vec::new()
+            } else {
+                real_roots(&reduced)?
+            };
+            if den.degree() > 0 {
+                roots.extend(real_roots(&den)?);
+            }
+            match out {
+                Domain::All => *out = Domain::Points(roots),
+                Domain::Points(existing) => existing.extend(roots),
+                Domain::Unknown => {}
+            }
+        }
+        Some(_) => {}
+        None => *out = Domain::Unknown,
+    }
+    Ok(())
+}
+
+/// 标准超越形 a·f(b·x + c) + d = 0 的解；仅支持指数/对数/三角的线性复合，
+/// 三角给出按周期去重的解族（sin/cos 周期 2π/|b|，tan 周期 π/|b|）。
+fn transcendental(combined: &Sym) -> Result<Solutions> {
+    let Sym::Add(terms) = combined else {
+        return Err(unsupported_form());
+    };
+    let mut constant = Rat::zero();
+    let mut func: Option<(Rat, Function, Box<Sym>)> = None;
+    for term in terms {
+        let (coefficient, core) = split_coefficient(term)?;
+        match core {
+            None => constant = constant.add(coefficient)?,
+            Some(Sym::Func(f, arg)) => {
+                if func.replace((coefficient, f, arg)).is_some() {
+                    return Err(unsupported_form());
+                }
+            }
+            Some(_) => return Err(unsupported_form()),
+        }
+    }
+    let Some((a, f, arg)) = func else {
+        return Err(unsupported_form());
+    };
+    let Some((b, c)) = linear_argument(&arg)? else {
+        return Err(unsupported_form());
+    };
+    let t = constant.neg()?.div(a)?; // f(b·x + c) = t
+    let (bf, cf) = (b.to_f64(), c.to_f64());
+    match f {
+        Function::Exp => {
+            // e^u = t：t > 0 才有实数解。
+            if t.num() <= 0 {
+                return Ok(Solutions::None);
+            }
+            Ok(Solutions::Finite(vec![finite(
+                (t.to_f64().ln() - cf) / bf,
+            )?]))
+        }
+        Function::Ln | Function::Log => {
+            // ln u = t → u = e^t；log u = t → u = 10^t。
+            let base = if f == Function::Ln {
+                t.to_f64().exp()
+            } else {
+                10.0_f64.powf(t.to_f64())
+            };
+            Ok(Solutions::Finite(vec![finite((base - cf) / bf)?]))
+        }
+        Function::Sin => {
+            let tf = t.to_f64();
+            if !(-1.0..=1.0).contains(&tf) {
+                return Ok(Solutions::None);
+            }
+            let base = tf.asin();
+            let period = std::f64::consts::TAU / bf.abs();
+            Ok(families(
+                vec![(base - cf) / bf, (std::f64::consts::PI - base - cf) / bf],
+                period,
+            ))
+        }
+        Function::Cos => {
+            let tf = t.to_f64();
+            if !(-1.0..=1.0).contains(&tf) {
+                return Ok(Solutions::None);
+            }
+            let base = tf.acos();
+            let period = std::f64::consts::TAU / bf.abs();
+            Ok(families(vec![(base - cf) / bf, (-base - cf) / bf], period))
+        }
+        Function::Tan => {
+            let base = t.to_f64().atan();
+            let period = std::f64::consts::PI / bf.abs();
+            Ok(families(vec![(base - cf) / bf], period))
+        }
+        _ => Err(unsupported_form()),
+    }
+}
+
+/// 复合参数必须是 x 的一次式 b·x + c（b ≠ 0）。
+fn linear_argument(arg: &Sym) -> Result<Option<(Rat, Rat)>> {
+    match rational_function(arg, 'x')? {
+        Some((num, den)) if den.degree() == 0 && num.degree() <= 1 => {
+            let lead = den.coefficient(0);
+            let b = num.coefficient(1).div(lead)?;
+            if b.is_zero() {
+                return Ok(None);
+            }
+            Ok(Some((b, num.coefficient(0).div(lead)?)))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// 解族按周期去重并格式化；周期恰为 π/2π 时用 π 记号。
+fn families(values: Vec<f64>, period: f64) -> Solutions {
+    let mut unique: Vec<f64> = Vec::new();
+    for v in values {
+        if unique
+            .iter()
+            .any(|u| ((u - v) % period).abs() < 1e-9 * period.abs().max(1.0))
+        {
+            continue;
+        }
+        unique.push(v);
+    }
+    let period = period_text(period);
+    Solutions::Families(
+        unique
+            .into_iter()
+            .map(|v| format!("x = {} + {period}k", super::display_number(v)))
+            .collect(),
     )
+}
+
+fn period_text(period: f64) -> String {
+    if (period - std::f64::consts::TAU).abs() < 1e-9 {
+        "2π".into()
+    } else if (period - std::f64::consts::PI).abs() < 1e-9 {
+        "π".into()
+    } else {
+        super::display_number(period)
+    }
+}
+
+/// 把一个乘积项拆成（有理系数，剩余核心）；纯常数的核心为 None。
+fn split_coefficient(sym: &Sym) -> Result<(Rat, Option<Sym>)> {
+    match sym {
+        Sym::Rat(r) => Ok((*r, None)),
+        Sym::Mul(factors) => {
+            let mut coefficient = Rat::one();
+            let mut rest = Vec::new();
+            for factor in factors {
+                match factor {
+                    Sym::Rat(r) => coefficient = coefficient.mul(*r)?,
+                    other => rest.push(other.clone()),
+                }
+            }
+            let core = match rest.len() {
+                0 => None,
+                1 => Some(rest.remove(0)),
+                _ => Some(Sym::Mul(rest)),
+            };
+            Ok((coefficient, core))
+        }
+        other => Ok((Rat::one(), Some(other.clone()))),
+    }
 }
 fn quadratic(a: f64, b: f64, c: f64) -> Result<Solutions> {
     if a == 0.0 {

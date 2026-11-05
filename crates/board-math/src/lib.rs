@@ -22,7 +22,8 @@ pub use numeric::{
     derivative, integrate, roots, sample, solve_quadratic_system,
 };
 pub use plot::{
-    CurveIntersection, IntersectionCurve, PlotKind, classify_plot, plot_expression, sample_plot,
+    CurveIntersection, ExplicitCurveIntersection, IntersectionCurve, PlotKind, classify_plot,
+    explicit_curve_intersections, plot_expression, sample_plot,
 };
 use std::fmt;
 
@@ -507,7 +508,7 @@ fn symbolic_command(input: &str) -> Option<Result<String>> {
             return simplify(body);
         }
         let comma = comma.ok_or_else(|| {
-            MathError::Syntax("格式为 diff(多项式,x) 或 integrate(多项式,x)，变量也可为 y".into())
+            MathError::Syntax("格式为 diff(表达式,x) 或 integrate(表达式,x)，变量也可为 y".into())
         })?;
         let expression = &body[..comma];
         let variable = match body[comma + 1..].trim() {
@@ -517,9 +518,23 @@ fn symbolic_command(input: &str) -> Option<Result<String>> {
         };
         statement_budget(expression, 5)?;
         if name == "diff" {
-            differentiate_polynomial(expression, variable)
+            match differentiate_polynomial(expression, variable) {
+                Ok(out) => Ok(out),
+                // 多项式路径不支持的表达式（函数符号、变量分母、次数超限）
+                // 交给符号引擎通用求导；其余错误原样保留。
+                Err(MathError::Unsupported(_) | MathError::Limit(_)) => {
+                    symbolic::differentiate(expression, variable)
+                }
+                Err(e) => Err(e),
+            }
         } else {
-            antiderivative_polynomial(expression, variable)
+            match antiderivative_polynomial(expression, variable) {
+                Ok(out) => Ok(out),
+                Err(MathError::Unsupported(_) | MathError::Limit(_)) => {
+                    symbolic::integrate(expression, variable)
+                }
+                Err(e) => Err(e),
+            }
         }
     })())
 }
@@ -553,6 +568,7 @@ pub fn calculate(input: &str) -> Result<String> {
         return Ok(match solve_equation(input)? {
             Solutions::None => "无实数解".into(),
             Solutions::Infinite => "任意实数 x 均为解".into(),
+            Solutions::Families(list) => list.join("；"),
             Solutions::Finite(v) => v
                 .iter()
                 .map(|x| format!("x = {}", display_number(*x)))
@@ -571,7 +587,7 @@ pub fn calculate(input: &str) -> Result<String> {
 }
 
 /// calculate 的有界便捷入口；分号分隔的两式支持总次数不超过 2 的系统。
-/// 二次系统仅返回矩形内数值候选，文字明确提示非完备；未找到不等于无解。
+/// 二次系统在矩形内的解由结式消元完备求得；范围外可能有额外解，范围内未找到即无解。
 /// 非方程组输入沿用 calculate，不使用边界与数值参数；结构化结果请用 solve_quadratic_system。
 pub fn calculate_with_bounds(
     input: &str,
@@ -619,6 +635,8 @@ pub fn calculate_with_bounds(
         result.unconverged_seeds
     ))
 }
+
+mod symbolic;
 
 #[cfg(test)]
 mod tests;

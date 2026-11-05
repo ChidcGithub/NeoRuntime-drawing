@@ -988,12 +988,11 @@ fn symbolic_polynomial_calculus_uses_calculate_and_bounded_entry() {
 }
 
 #[test]
-fn symbolic_commands_are_bounded_not_general_cas() {
+// CAS 升级后：diff/integrate 支持任意初等函数（此前仅多项式）；
+// 语法、预算与定义域守卫保持不变。
+fn symbolic_commands_are_general_cas_with_guards() {
+    // 语法与用法错误仍然报错。
     for input in [
-        "diff(sin(x),x)",
-        "integrate(1/x,x)",
-        "diff(x/x,x)",
-        "diff(x^0,x)",
         "diff(x,z)",
         "diff(x)",
         "diff(x,x,y)",
@@ -1008,15 +1007,23 @@ fn symbolic_commands_are_bounded_not_general_cas() {
         "integrate(x,0,1)",
         "simplify(x=1);y=2",
         "simplify(x=1,y=2)",
+        "integrate(x*sin(x),x)",
     ] {
         assert!(calculate(input).is_err(), "{input}");
     }
-    for input in ["diff(x^13,x)", "integrate(x^12,x)", "integrate(y^12,x)"] {
-        assert!(
-            matches!(calculate(input), Err(MathError::Limit(_))),
-            "{input}"
-        );
-    }
+    // 通用微积分能力。
+    assert_eq!(calculate("diff(sin(x),x)").unwrap(), "cos(x)");
+    assert_eq!(calculate("integrate(1/x,x)").unwrap(), "ln(x)");
+    assert_eq!(calculate("diff(x/x,x)").unwrap(), "0");
+    assert_eq!(calculate("diff(x^0,x)").unwrap(), "0");
+    assert_eq!(calculate("diff(x^13,x)").unwrap(), "13*x^12");
+    assert_eq!(calculate("integrate(x^12,x)").unwrap(), "1/13*x^13");
+    assert_eq!(calculate("diff(x^25,x)").unwrap(), "25*x^24");
+    // 幂指数超过符号引擎上限（128）报 Limit。
+    assert!(matches!(
+        calculate("diff(x^130,x)"),
+        Err(MathError::Limit(_))
+    ));
     assert!(matches!(
         calculate("diff(1e308*x^2,x)"),
         Err(MathError::Domain(_))
@@ -1463,7 +1470,7 @@ fn hyperbolic_functions_domains_and_calculus() {
 }
 
 #[test]
-fn bounded_calculation_reports_search_not_proof() {
+fn bounded_calculation_reports_complete_system_search() {
     let b = Bounds2D {
         x_min: -2.0,
         x_max: 2.0,
@@ -1475,12 +1482,12 @@ fn bounded_calculation_reports_search_not_proof() {
         max_evaluations: 100000,
         ..options()
     };
+    // 结式消元后二次系统在给定范围内完备求解。
     let text = calculate_with_bounds("x^2+y^2=1;y=x", b, o).unwrap();
-    assert!(text.contains("数值搜索不保证完备"));
     assert!(text.contains("x = "));
+    assert!(!text.contains("不保证完备"));
     let text = calculate_with_bounds("x^2+y^2=-1;y=x", b, o).unwrap();
-    assert!(text.contains("未找到候选解"));
-    assert!(text.contains("未找到不等于无解"));
+    assert!(text.contains("内无解"), "{text}");
     assert_eq!(calculate_with_bounds("2+3", b, o).unwrap(), "5");
     let text = calculate_with_bounds("x=1;y=0", b, o).unwrap();
     assert!(text.contains("x = 1, y = "));
@@ -1505,7 +1512,7 @@ fn bounded_calculation_reports_search_not_proof() {
             "y=x",
             b,
             NumericOptions {
-                max_evaluations: 32,
+                max_evaluations: 1,
                 ..o
             }
         ),
@@ -1728,7 +1735,11 @@ fn equations_and_degeneracy() {
     };
     assert!((r[1] + 1e-8).abs() < 1e-20);
     assert!(solve_equation("y=1").is_err());
-    assert!(solve_equation("x^3=0").is_err());
+    // 阶段 2 升级：三次方程由符号引擎精确求解（x^3 = 0 → x = 0）。
+    assert_eq!(
+        solve_equation("x^3=0").unwrap(),
+        Solutions::Finite(vec![0.0])
+    );
     assert!(solve_equation("x=1=2").is_err());
     assert_eq!(calculate("2x=6").unwrap(), "x = 3");
 }
@@ -1836,7 +1847,7 @@ fn numerical_roots_and_intersections() {
     close(p[1].y, 1.0);
 }
 #[test]
-fn quadratic_system_search_is_bounded_and_incomplete() {
+fn quadratic_system_search_is_bounded_and_complete() {
     let b = Bounds2D {
         x_min: -2.0,
         x_max: 2.0,
@@ -1849,7 +1860,7 @@ fn quadratic_system_search_is_bounded_and_incomplete() {
         ..options()
     };
     let s = solve_quadratic_system("x^2+y^2=1", "y=x", b, o).unwrap();
-    assert!(!s.complete);
+    assert!(s.complete);
     assert_eq!(s.points.len(), 2);
     for p in s.points {
         close(p.x, p.y);
@@ -1868,4 +1879,87 @@ fn quadratic_system_search_is_bounded_and_incomplete() {
     let s = solve_quadratic_system("x=1", "y=0", b, o).unwrap();
     assert!(s.complete);
     assert_eq!(s.points, vec![Point { x: 1.0, y: 0.0 }]);
+}
+
+// CAS 求解升级：高次多项式（精确有理根 + 完备数值隔离）、分式方程（增根
+// 剔除）、定义域哲学（恒等式但个别点无定义时不宣称任意实数均为解）、
+// 标准超越形（指数/对数/三角线性复合，三角给解族）。
+#[test]
+fn cas_solves_higher_degree_rational_and_transcendental() {
+    // 高次：精确有理根；x^3 = 8 → x = 2（其余为复根，不列实根）。
+    assert_eq!(
+        solve_equation("x^3-8=0").unwrap(),
+        Solutions::Finite(vec![2.0])
+    );
+    // 三实根：(x-1)(x-2)(x-3)。
+    assert_eq!(
+        solve_equation("x^3-6*x^2+11*x-6=0").unwrap(),
+        Solutions::Finite(vec![1.0, 2.0, 3.0])
+    );
+    // 无理根：x^3 = 2 的唯一实根由完备隔离给出，不再漏根。
+    let Solutions::Finite(r) = solve_equation("x^3-2=0").unwrap() else {
+        panic!()
+    };
+    assert_eq!(r.len(), 1);
+    assert!((r[0] - 2.0_f64.cbrt()).abs() < 1e-9);
+    // 分式方程：1/x = 2。
+    assert_eq!(
+        solve_equation("1/x=2").unwrap(),
+        Solutions::Finite(vec![0.5])
+    );
+    // 增根剔除：(x^2-1)/(x+1) = 0 → x = 1（x = -1 使分母为零）。
+    assert_eq!(
+        solve_equation("(x^2-1)/(x+1)=0").unwrap(),
+        Solutions::Finite(vec![1.0])
+    );
+    // 定义域哲学：恒等式但个别点无定义 → 保持拒绝。
+    assert!(solve_equation("x/x=1").is_err());
+    assert!(solve_equation("x^0=1").is_err());
+    // 无解：1/x = 0。
+    assert_eq!(solve_equation("1/x=0").unwrap(), Solutions::None);
+    // 标准超越形。
+    assert_eq!(calculate("exp(x)=1").unwrap(), "x = 0");
+    assert_eq!(solve_equation("exp(x)+1=0").unwrap(), Solutions::None);
+    let Solutions::Finite(r) = solve_equation("ln(x)=1").unwrap() else {
+        panic!()
+    };
+    assert!((r[0] - std::f64::consts::E).abs() < 1e-12);
+    // 三角解族：sin(x) = 0.5 → 两族；tan(x) = 1 → 一族（周期 π）。
+    let Solutions::Families(f) = solve_equation("sin(x)=0.5").unwrap() else {
+        panic!()
+    };
+    assert_eq!(f.len(), 2);
+    assert!(f[0].starts_with("x = 0.5235987755982989 + 2πk"), "{f:?}");
+    let Solutions::Families(f) = solve_equation("tan(x)=1").unwrap() else {
+        panic!()
+    };
+    assert_eq!(f.len(), 1);
+    assert!(f[0].contains("+ πk"), "{f:?}");
+}
+
+// 通用微积分：乘积法则、链式法则与标准形积分（多项式输入仍走既有路径）。
+#[test]
+fn cas_general_calculus_outputs() {
+    assert_eq!(calculate("diff(x*sin(x),x)").unwrap(), "cos(x)*x + sin(x)");
+    assert_eq!(calculate("diff(exp(2*x),x)").unwrap(), "2*exp(2*x)");
+    assert_eq!(calculate("diff(ln(x),x)").unwrap(), "1/x");
+    assert_eq!(calculate("diff(tan(x),x)").unwrap(), "1/cos(x)^2");
+    assert_eq!(calculate("diff(sqrt(x),x)").unwrap(), "0.5/sqrt(x)");
+    // 链式：内层导数与外层导数都出现。
+    let text = calculate("diff(cos(x^2+1),x)").unwrap();
+    assert!(
+        text.contains("sin(1 + x^2)") && text.contains("2"),
+        "{text}"
+    );
+    assert_eq!(calculate("integrate(cos(x),x)").unwrap(), "sin(x)");
+    assert_eq!(calculate("integrate(exp(2*x),x)").unwrap(), "0.5*exp(2*x)");
+    assert_eq!(
+        calculate("integrate(sin(2*x+1),x)").unwrap(),
+        "-0.5*cos(1 + 2*x)"
+    );
+    assert_eq!(calculate("integrate(sqrt(x),x)").unwrap(), "2/3*sqrt(x^3)");
+    assert_eq!(calculate("integrate(ln(x),x)").unwrap(), "ln(x)*x - x");
+    assert_eq!(calculate("integrate(tan(x),x)").unwrap(), "-ln(cos(x))");
+    // 多项式输入保持既有输出路径。
+    assert_eq!(calculate("diff(x^2*y,x)").unwrap(), "2*x*y");
 }

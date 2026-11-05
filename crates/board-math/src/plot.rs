@@ -1,6 +1,9 @@
+use super::symbolic::{
+    Rat, Sym, add_terms, mul_terms, rational_function, real_roots, sym_from_node,
+};
 use super::{
     Bounds2D, Expr, MathError, Node, NumericOptions, Point, Polynomial, Result, SampledCurve,
-    algebra, checked_ratio, finite, normalize, parse, sample, statement_budget,
+    algebra, checked_ratio, eval_at, finite, normalize, parse, sample, statement_budget,
 };
 
 /// 手动绘图的存储形式：显函数为右端表达式，隐式曲线为完整单个等式。
@@ -588,4 +591,96 @@ fn conic(
             })
         })
         .collect()
+}
+
+/// 两条显函数曲线 y=f(x)、y=g(x) 的交点求解结果。
+pub enum ExplicitCurveIntersection {
+    /// 全部实交点（x 由符号引擎完备隔离，y 由 f 数值求值）。
+    Points(Vec<Point>),
+    /// f ≡ g：曲线在共同定义域上重合。
+    Coincident,
+    /// 至少一条不是显函数，或 f−g 不是多项式/有理关系：回落数值路径。
+    NotApplicable,
+}
+
+/// 显函数曲线交点：解 f−g=0（精确有理根 + 完备实根隔离，不再依赖采样
+/// 与区间运气），分母零点按定义域剔除。不是完备含义下的通用曲线求交：
+/// 含函数符号或非显函数的输入返回 NotApplicable，由调用方回落数值搜索。
+pub fn explicit_curve_intersections(
+    first: &str,
+    second: &str,
+) -> Result<ExplicitCurveIntersection> {
+    // y=f(x) 与 y 轴（x=0）：交点为 (0, f(0))，精确求值；f 在 x=0 无定义则无交点。
+    if second.trim() == "x=0" {
+        let a = match classify_plot(first)? {
+            PlotKind::Explicit(expression) => expression,
+            PlotKind::Implicit(_) => return Ok(ExplicitCurveIntersection::NotApplicable),
+        };
+        let f_sym = sym_from_node(&parse(&a)?.node)?;
+        let y = match rational_function(&f_sym, 'x')? {
+            Some((num, den)) => {
+                let d = den.eval_rat(Rat::zero())?;
+                if d == Rat::zero() {
+                    return Ok(ExplicitCurveIntersection::Points(Vec::new()));
+                }
+                num.eval_rat(Rat::zero())?.div(d)?.to_f64()
+            }
+            None => eval_at(&a, 0.0)?,
+        };
+        return Ok(ExplicitCurveIntersection::Points(vec![Point { x: 0.0, y }]));
+    }
+    let a = match classify_plot(first)? {
+        PlotKind::Explicit(expression) => expression,
+        PlotKind::Implicit(_) => return Ok(ExplicitCurveIntersection::NotApplicable),
+    };
+    let b = match classify_plot(second)? {
+        PlotKind::Explicit(expression) => expression,
+        PlotKind::Implicit(_) => return Ok(ExplicitCurveIntersection::NotApplicable),
+    };
+    let combined = add_terms(vec![
+        sym_from_node(&parse(&a)?.node)?,
+        mul_terms(vec![
+            Sym::Rat(Rat::new(-1, 1)?),
+            sym_from_node(&parse(&b)?.node)?,
+        ])?,
+    ])?;
+    let Some((num, den)) = rational_function(&combined, 'x')? else {
+        return Ok(ExplicitCurveIntersection::NotApplicable);
+    };
+    let g = num.gcd(&den)?;
+    let num = if g.is_zero() { num } else { num.divmod(&g)?.0 };
+    if num.is_zero() {
+        return Ok(ExplicitCurveIntersection::Coincident);
+    }
+    let mut xs = real_roots(&num)?;
+    if den.degree() > 0 {
+        let den_roots = real_roots(&den)?;
+        xs.retain(|x| {
+            !den_roots
+                .iter()
+                .any(|y| (x - y).abs() < 1e-9 * x.abs().max(1.0))
+        });
+    }
+    // y 按精确有理数求值（避免 0.1*(-3)+0.3 型舍入残差冒充非零）；
+    // f 不是有理函数时回落数值求值。
+    let f_view = rational_function(&sym_from_node(&parse(&a)?.node)?, 'x')?;
+    let points = xs
+        .into_iter()
+        .map(|x| {
+            let y = f_view
+                .as_ref()
+                .and_then(|(num, den)| {
+                    let x_rat = Rat::from_f64(x).ok()?;
+                    let d = den.eval_rat(x_rat).ok()?;
+                    if d == Rat::zero() {
+                        return None;
+                    }
+                    num.eval_rat(x_rat).ok()?.div(d).ok()
+                })
+                .map(|r| r.to_f64())
+                .unwrap_or_else(|| eval_at(&a, x).unwrap_or(f64::NAN));
+            Ok(Point { x, y })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ExplicitCurveIntersection::Points(points))
 }

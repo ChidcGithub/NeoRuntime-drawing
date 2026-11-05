@@ -81,8 +81,9 @@ fn expression_position_and_function_validation() {
     assert!(board_math::calculate("1+1=").is_err());
     assert!(calculation_output("1+1=2", bounds, false).unwrap().1);
     assert!(calculation_output("x+1=2", bounds, false).unwrap().1);
+    // 结式消元后二次系统完备求解，不再提示非完备。
     let quadratic = calculation_output("x^2+y^2=1;x-y=0", bounds, false).unwrap();
-    assert!(quadratic.1 && quadratic.0.contains("不保证完备"));
+    assert!(quadratic.1 && !quadratic.0.contains("不保证完备"));
     let b = Rect::from_min_max(Pos2::new(10.0, 20.0), Pos2::new(80.0, 60.0));
     assert_eq!(result_position(b, false), Point { x: 96.0, y: 20.0 });
     assert_eq!(result_position(b, true), Point { x: 10.0, y: 74.0 });
@@ -404,13 +405,9 @@ fn poles_are_not_intersections() {
     let report = intersections(&object);
     assert!(report.candidates.is_empty());
     assert_eq!(report.failed_searches, 0);
-    assert!(report.summary().contains("非证明无交点"));
-    assert!(
-        report
-            .diagnostics
-            .iter()
-            .any(|d| d.issue == IntersectionIssue::DomainGap)
-    );
+    // 符号引擎证明 1/x = 0 无解：完备结论，不再有极点域间隙诊断。
+    assert!(!report.noncomplete);
+    assert!(report.diagnostics.is_empty(), "{report:?}");
 }
 
 #[test]
@@ -426,7 +423,7 @@ fn intersection_report_retains_good_points_and_bounds_diagnostics() {
             .iter()
             .any(|(_, label)| label.contains("1.000000, 1.000000"))
     );
-    assert!(good.noncomplete);
+    assert!(!good.noncomplete);
     if let ObjectKind::FunctionPlot { expressions, .. } = &mut object.kind {
         expressions.extend(vec!["无效函数".repeat(100); 14]);
     }
@@ -446,16 +443,30 @@ fn intersection_report_retains_good_points_and_bounds_diagnostics() {
 
 #[test]
 fn limited_search_and_coincident_curves_are_explicit() {
+    // 显函数零点由符号引擎完备求解，不消耗数值预算。
     let object = plot("x^2".into(), Point::default());
+    let complete = intersections(&object);
+    assert_eq!(complete.candidates.len(), 1);
+    assert!(!complete.noncomplete);
+    assert!(
+        complete
+            .candidates
+            .iter()
+            .any(|(_, text)| text.contains("符号引擎完备求解"))
+    );
+    // 含函数符号的显函数走数值路径：预算耗尽如实报 Limit。
+    let mut line_object = object.clone();
+    if let ObjectKind::FunctionPlot { expressions, .. } = &mut line_object.kind {
+        *expressions = vec!["sin(x)".into()];
+    }
     let limited = intersections_with_options(
-        &object,
+        &line_object,
         board_math::NumericOptions {
             steps: 128,
             max_evaluations: 32,
             ..Default::default()
         },
     );
-    assert_eq!(limited.candidates.len(), 1); // y 轴求值成功，不随根搜索失败丢失。
     assert!(
         limited
             .diagnostics

@@ -11,7 +11,7 @@ fn compact_math_help_keeps_limits_visible_and_template_overwrite_warning_reachab
     let closed = panel_frame(&mut app, &ctx, vec![]);
     for label in [
         "识别结果须核对/纠错后点击计算；分数不是正确概率。",
-        "二元二次求解仅给范围内数值候选，不保证全解。",
+        "方程组经结式消元在范围内完备求解，重合曲线单独提示。",
         "数值微分/积分仅为近似，不支持广义积分。",
         "数学语法与限制",
         "学习个人符号模板（只在本机）",
@@ -28,7 +28,7 @@ fn compact_math_help_keeps_limits_visible_and_template_overwrite_warning_reachab
     let help = click_panel_text(&mut app, &ctx, "数学语法与限制");
     text_position(
         &help,
-        "符号运算仅支持有限 x/y 多项式；原函数积分常数取 0，不表示完整通解。",
+        "符号引擎支持初等函数求导、标准形积分与方程求解；积分常数取 0。",
     );
     assert!(format!("{:?}", help.shapes).contains("simplify(x+1=2)"));
     let templates = click_panel_text(&mut app, &ctx, "学习个人符号模板（只在本机）");

@@ -949,7 +949,7 @@ fn intersections_with_options(
         .enumerate()
         .filter_map(
             |(i, expression)| match board_math::IntersectionCurve::parse(expression) {
-                Ok(curve) => Some((i, curve)),
+                Ok(curve) => Some((i, curve, expression.clone())),
                 Err(error) => {
                     unsupported |= matches!(error, board_math::MathError::Unsupported(_));
                     report.error(&format!("曲线{} {}", i + 1, plot_text(expression)), error);
@@ -983,13 +983,35 @@ fn intersections_with_options(
     };
     let x_axis = board_math::IntersectionCurve::parse("y=0").unwrap();
     let y_axis = board_math::IntersectionCurve::parse("x=0").unwrap();
-    let mut points = Vec::new();
+    // (坐标, 是否符号完备)：显函数对走 CAS（完备），其余回落数值搜索。
+    report.noncomplete = false;
+    let mut points: Vec<((f64, f64), bool)> = Vec::new();
     let mut search = |curve: &board_math::IntersectionCurve,
                       other: &board_math::IntersectionCurve,
-                      scope: &str| {
+                      scope: &str,
+                      expr_a: &str,
+                      expr_b: &str| {
+        match board_math::explicit_curve_intersections(expr_a, expr_b) {
+            Ok(board_math::ExplicitCurveIntersection::Points(found)) => {
+                points.extend(found.into_iter().map(|p| ((p.x, p.y), true)));
+                return;
+            }
+            Ok(board_math::ExplicitCurveIntersection::Coincident) => {
+                report.diagnose(
+                    IntersectionIssue::NonDiscrete,
+                    scope,
+                    "共同定义域上重合，非离散交点（定义域可能为空）",
+                );
+                return;
+            }
+            // 非显函数对或符号路径预算受限：回落数值搜索并如实标注非完备。
+            Ok(board_math::ExplicitCurveIntersection::NotApplicable) => {}
+            Err(_) => {}
+        }
+        report.noncomplete = true;
         match curve.intersections(other, bounds, options) {
             Ok(board_math::CurveIntersection::Points(found)) => {
-                points.extend(found.into_iter().map(|p| (p.x, p.y)))
+                points.extend(found.into_iter().map(|p| ((p.x, p.y), false)))
             }
             Ok(board_math::CurveIntersection::NonDiscrete) => report.diagnose(
                 IntersectionIssue::NonDiscrete,
@@ -999,26 +1021,49 @@ fn intersections_with_options(
             Err(error) => report.error(scope, error),
         }
     };
-    for (index, (i, curve)) in curves.iter().enumerate() {
+    for (index, (i, curve, expression)) in curves.iter().enumerate() {
         if *y_min <= 0.0 && *y_max >= 0.0 {
-            search(curve, &x_axis, &format!("曲线{} 与 x 轴", i + 1));
+            search(
+                curve,
+                &x_axis,
+                &format!("曲线{} 与 x 轴", i + 1),
+                expression,
+                "0",
+            );
         }
         if *x_min <= 0.0 && *x_max >= 0.0 {
-            search(curve, &y_axis, &format!("曲线{} 与 y 轴", i + 1));
+            search(
+                curve,
+                &y_axis,
+                &format!("曲线{} 与 y 轴", i + 1),
+                expression,
+                "x=0",
+            );
         }
-        for (j, other) in curves.iter().skip(index + 1) {
-            search(curve, other, &format!("曲线{} 与曲线{}", i + 1, j + 1));
+        for (j, other, other_expression) in curves.iter().skip(index + 1) {
+            search(
+                curve,
+                other,
+                &format!("曲线{} 与曲线{}", i + 1, j + 1),
+                expression,
+                other_expression,
+            );
         }
     }
-    points.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    points.sort_by(|a, b| {
+        (a.0)
+            .0
+            .total_cmp(&(b.0).0)
+            .then((a.0).1.total_cmp(&(b.0).1))
+    });
     // 按 x 精确排序后，容差内的同一点未必相邻（例如 y 轴上夹着另一交点）。
-    let mut unique: Vec<(f64, f64)> = Vec::new();
+    let mut unique: Vec<((f64, f64), bool)> = Vec::new();
     for point in points {
         if !unique
             .iter()
             .rev()
-            .take_while(|p| point.0 - p.0 < 1e-6)
-            .any(|p| (point.1 - p.1).abs() < 1e-6)
+            .take_while(|p| point.0.0 - p.0.0 < 1e-6)
+            .any(|p| (point.0.1 - p.0.1).abs() < 1e-6)
         {
             unique.push(point);
         }
@@ -1026,7 +1071,7 @@ fn intersections_with_options(
     let points = unique;
     report.candidates = points
         .into_iter()
-        .filter(|(x, y)| {
+        .filter(|((x, y), _)| {
             x.is_finite()
                 && y.is_finite()
                 && *x >= *x_min
@@ -1034,16 +1079,21 @@ fn intersections_with_options(
                 && *y >= *y_min
                 && *y <= *y_max
         })
-        .map(|(x, y)| {
+        .map(|((x, y), complete)| {
             // 解析行列式可能给出 -0.0；坐标标签统一显示精确零。
             let x = if x == 0.0 { 0.0 } else { x };
             let y = if y == 0.0 { 0.0 } else { y };
+            let source = if complete {
+                "符号引擎完备求解"
+            } else {
+                "有限区间数值候选"
+            };
             (
                 Pos2::new(
                     position.x + ((x - x_min) / (x_max - x_min)) as f32 * width,
                     position.y + ((y_max - y) / (y_max - y_min)) as f32 * height,
                 ),
-                format!("交点约 ({x:.6}, {y:.6})；有限区间数值候选"),
+                format!("交点约 ({x:.6}, {y:.6})；{source}"),
             )
         })
         .collect();

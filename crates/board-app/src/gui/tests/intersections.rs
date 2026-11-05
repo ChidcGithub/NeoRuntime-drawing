@@ -67,7 +67,7 @@ fn intersection_headless_selection_wait_click_and_move() {
     drain_workers(&mut app);
     let found = plot_frame(&mut app, &ctx, vec![]);
     assert!(found.contains("找到 2 候选"));
-    assert!(found.contains("非完备"));
+    assert!(!found.contains("非完备"));
     let marker = app
         .plot_points
         .as_ref()
