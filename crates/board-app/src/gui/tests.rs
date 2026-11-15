@@ -389,3 +389,4 @@ include!("tests/multi_touch.rs");
 include!("tests/canvas_view.rs");
 include!("tests/snap_e2e.rs");
 include!("tests/eraser_line.rs");
+include!("tests/neoui.rs");

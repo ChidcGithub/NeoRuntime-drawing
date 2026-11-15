@@ -540,7 +540,9 @@ dependencies = [
  "board-session",
  "eframe",
  "egui",
+ "egui-surface",
  "log",
+ "neo-ui-adapter",
  "png 0.17.16",
  "serde",
  "serde_json",
@@ -1143,6 +1145,13 @@ dependencies = [
  "smallvec 1.16.2",
  "unicode-segmentation",
  "web-sys",
+]
+
+[[package]]
+name = "egui-surface"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "egui",
 ]
 
 [[package]]
@@ -2333,6 +2342,14 @@ version = "0.1.14"
 dependencies = [
  "board-app",
  "serde_json",
+]
+
+[[package]]
+name = "neo-ui-adapter"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "egui",
+ "egui-surface",
 ]
 
 [[package]]

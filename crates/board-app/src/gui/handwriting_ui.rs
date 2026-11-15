@@ -2,6 +2,7 @@ use crate::{features::Background, handwriting::Profile};
 use board_core::{Color, HandwritingStroke, ObjectKind, Point, StrokePoint, Style};
 use board_render::HandwritingFont;
 use egui::{Color32, PointerButton, Pos2, Rect, Sense, Stroke, Vec2};
+use egui_surface::actions::ActionButton;
 use std::path::PathBuf;
 
 const CANVAS: f32 = 128.0;
@@ -450,9 +451,13 @@ impl HandwritingUi {
             ui.separator();
             ui.small("以下确认仅用于防止误删或覆盖，不是自动学习的前置条件。");
             ui.checkbox(&mut self.confirm_reset, "确认清空整个个人笔迹档案（含风格统计）");
-            if ui
-                .add_enabled(self.can_reset(), egui::Button::new("清空全部样本与风格"))
-                .clicked()
+            if ActionButton::danger(
+                egui::Id::new("hwr.profile.reset"),
+                "清空全部样本与风格",
+            )
+            .enabled(self.can_reset())
+            .show(ui)
+            .clicked()
             {
                 self.profile.clear();
                 self.profile_changed();
@@ -466,7 +471,12 @@ impl HandwritingUi {
             if self.worker.busy() {
                 ui.small("后台任务处理中（单槽，无排队）；旧工作结束前不能提交新任务。");
                 if self.pending.as_ref().is_some_and(|p| p.kind != WorkKind::Save && !p.stale)
-                    && ui.button("丢弃本次结果（等待后台结束）").clicked()
+                    && ActionButton::secondary(
+                        egui::Id::new("hwr.discard.result"),
+                        "丢弃本次结果（等待后台结束）",
+                    )
+                    .show(ui)
+                    .clicked()
                 {
                     self.invalidate_work();
                 }
@@ -525,28 +535,35 @@ impl HandwritingUi {
             self.draft.points()
         ));
         ui.horizontal(|ui| {
-            if ui.button("撤回一笔").clicked() {
+            if ActionButton::secondary(egui::Id::new("hwr.draft.undo"), "撤回一笔")
+                .show(ui)
+                .clicked()
+            {
                 self.draft.undo();
             }
-            if ui.button("清空草稿").clicked() {
+            if ActionButton::danger(egui::Id::new("hwr.draft.clear"), "清空草稿")
+                .show(ui)
+                .clicked()
+            {
                 self.draft = Draft::default();
             }
         });
         let can_add = label.is_some_and(|ch| self.profile.sample_count(ch) < 3)
             && self.draft.active.is_none()
             && !self.draft.strokes.is_empty();
-        if ui
-            .add_enabled(can_add, egui::Button::new("加入精确字形"))
+        if ActionButton::primary(egui::Id::new("hwr.draft.add"), "加入精确字形")
+            .enabled(can_add)
+            .show(ui)
             .clicked()
         {
             changed |= self.add_draft();
         }
         ui.checkbox(&mut self.confirm_delete, "确认删除当前标签的全部变体");
-        if ui
-            .add_enabled(
+        if ActionButton::danger(egui::Id::new("hwr.label.delete"), "删除当前标签")
+            .enabled(
                 self.confirm_delete && label.is_some_and(|ch| self.profile.sample_count(ch) > 0),
-                egui::Button::new("删除当前标签"),
             )
+            .show(ui)
             .clicked()
         {
             self.profile.remove(label.unwrap());
@@ -694,11 +711,9 @@ impl HandwritingUi {
         }
         ui.small("不自动读写、不扫描目录。加载替换内存档案；保存不改变启用状态。");
         ui.checkbox(&mut self.confirm_load, "确认加载此路径并替换当前内存档案");
-        if ui
-            .add_enabled(
-                !self.worker.busy() && !self.path.trim().is_empty() && self.confirm_load,
-                egui::Button::new("加载指定档案"),
-            )
+        if ActionButton::secondary(egui::Id::new("hwr.file.load"), "加载指定档案")
+            .enabled(!self.worker.busy() && !self.path.trim().is_empty() && self.confirm_load)
+            .show(ui)
             .clicked()
         {
             self.confirm_load = false;
@@ -709,11 +724,9 @@ impl HandwritingUi {
             &mut self.confirm_overwrite,
             "确认保存到此路径，并允许覆盖该路径已有文件",
         );
-        if ui
-            .add_enabled(
-                !self.worker.busy() && !self.path.trim().is_empty() && self.confirm_overwrite,
-                egui::Button::new("保存到指定路径"),
-            )
+        if ActionButton::secondary(egui::Id::new("hwr.file.save"), "保存到指定路径")
+            .enabled(!self.worker.busy() && !self.path.trim().is_empty() && self.confirm_overwrite)
+            .show(ui)
             .clicked()
         {
             self.confirm_overwrite = false;
@@ -733,8 +746,9 @@ impl HandwritingUi {
         {
             self.invalidate_work();
         }
-        if ui
-            .add_enabled(!self.worker.busy(), egui::Button::new("生成风格预览"))
+        if ActionButton::secondary(egui::Id::new("hwr.preview.generate"), "生成风格预览")
+            .enabled(!self.worker.busy())
+            .show(ui)
             .clicked()
         {
             self.start_work(ui.ctx(), WorkKind::Preview, font);

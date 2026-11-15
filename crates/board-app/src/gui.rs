@@ -12,9 +12,10 @@ use board_hwr::{
     AutoCalculate, CalculationRequest, ContextToken, InkRecognizer, NeuralFormula,
     NeuralRecognizer, Recognition, latex_to_expression,
 };
-use board_protocol::{Event, Message, Request, read_message};
+use board_protocol::{Event, Message, ProtocolError, Request, Response, read_message};
 use board_session::Session;
 use egui::{Align2, Color32, Key, Pos2, Rect, Sense, Stroke, Vec2, ViewportCommand};
+use egui_surface::actions::ActionButton;
 use icons::Icon;
 use std::collections::HashMap;
 use std::{
@@ -25,6 +26,38 @@ use std::{
     sync::mpsc,
     time::{Duration, Instant},
 };
+
+/// NeoUI 全量主题：深/浅两个主题槽都换成 NeoUI 品牌预设（跟随系统明暗），
+/// 触摸距离 1.2（Comfortable 基线 -> 主按钮高约 40pt，希沃式易点但不大）。
+fn apply_neoui_themes(ctx: &egui::Context) {
+    apply_theme_seed(ctx, None);
+}
+
+/// 单个主题槽的预设：宿主给定种子色时用 from_seed 动态生成，否则用品牌预设。
+fn themed_preset(
+    mode: neo_ui_adapter::ThemeMode,
+    seed: Option<Color32>,
+) -> neo_ui_adapter::NeoStyle {
+    let base = match seed {
+        Some(seed) => neo_ui_adapter::NeoStyle::from_seed(seed, mode),
+        None => neo_ui_adapter::NeoStyle::new(mode),
+    };
+    base.with_density(neo_ui_adapter::Density::Comfortable)
+        .with_distance(1.2)
+}
+
+/// 动态取色：把种子色应用到深/浅两个主题槽（跟随系统明暗），
+/// 密度与触摸距离不变；None 恢复内置品牌预设。
+pub(crate) fn apply_theme_seed(ctx: &egui::Context, seed: Option<Color32>) {
+    for (slot, mode) in [
+        (egui::Theme::Dark, neo_ui_adapter::ThemeMode::Dark),
+        (egui::Theme::Light, neo_ui_adapter::ThemeMode::Light),
+    ] {
+        let preset = themed_preset(mode, seed);
+        ctx.style_mut_of(slot, |style| preset.apply_to(style));
+    }
+    ctx.request_repaint();
+}
 
 fn toolbar_scale(viewport: Vec2, compact: bool) -> f32 {
     let relative = (viewport.x / 1920.0).min(viewport.y / 1080.0);
@@ -917,6 +950,7 @@ pub fn run(mode: AppMode, hosted: bool) -> Result {
             cc.egui_ctx.add_plugin(DebugInkOutput::default());
         }
         // #endregion
+        apply_neoui_themes(&cc.egui_ctx);
         let export_resources = load_font(&cc.egui_ctx);
         if !hosted {
             let request = Request::new("runtime:standalone", "configure", serde_json::json!({
@@ -1368,6 +1402,73 @@ impl BoardApp {
             }
         }
     }
+    /// 动态取色：theme.seed（Neo -> 子项目）。seed 为 "#RRGGBB" 或 "RRGGBB"；
+    /// 双主题槽（跟随系统明暗）即时从种子重生成，密度与触摸距离不变。
+    /// 不持久化：宿主重启后需重新发送。画布笔迹与用户内容不受影响。
+    fn handle_theme_seed(&mut self, ctx: &egui::Context, request: Request) -> Vec<Message> {
+        let fail = |id: &str, code: &str, message: &str| {
+            vec![Message::Response(
+                Response::failure(id, ProtocolError::new(code, message)).unwrap(),
+            )]
+        };
+        // 与文档会话同一套帧校验与生命周期门控。
+        if let Err(e) = Message::Request(request.clone()).validate() {
+            return vec![Message::Event(Event::new(
+                "protocol_error",
+                serde_json::json!({"code": e.code()}),
+            ))];
+        }
+        if request.id.len() > 256 {
+            return fail(&request.id, "invalid_id", "请求 ID 最多 256 字节");
+        }
+        if !self.session.configured {
+            return fail(&request.id, "not_configured", "必须先 configure");
+        }
+        if self.session.state()["close_pending"] == true {
+            return fail(&request.id, "session_closing", "等待全部窗口关闭确认");
+        }
+        if self.session.closed {
+            return fail(&request.id, "session_closed", "会话已关闭");
+        }
+        if !request.params.is_object() {
+            return fail(&request.id, "invalid_params", "params 必须是对象");
+        }
+        let Some(raw) = request.params["seed"].as_str() else {
+            return fail(
+                &request.id,
+                "invalid_params",
+                "seed 必须是 \"#RRGGBB\" 或 \"RRGGBB\" 字符串",
+            );
+        };
+        let trimmed = raw.trim();
+        let hex = trimmed.strip_prefix('#').unwrap_or(trimmed);
+        if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return fail(
+                &request.id,
+                "invalid_params",
+                "seed 必须是 6 位十六进制 RGB",
+            );
+        }
+        let value = u32::from_str_radix(hex, 16).unwrap_or(0);
+        let seed = Color32::from_rgb(
+            ((value >> 16) & 0xFF) as u8,
+            ((value >> 8) & 0xFF) as u8,
+            (value & 0xFF) as u8,
+        );
+        apply_theme_seed(ctx, Some(seed));
+        vec![Message::Response(
+            Response::success(
+                &request.id,
+                serde_json::json!({
+                    "applied": true,
+                    "seed": format!("#{}", hex.to_ascii_lowercase()),
+                    "mode": "both",
+                }),
+            )
+            .unwrap(),
+        )]
+    }
+
     fn incoming_message(&mut self, message: Message) {
         let before = ContextToken::capture(&self.session.document);
         let mut replaced = false;
@@ -2189,10 +2290,16 @@ impl BoardApp {
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        if ui.button("展开黑板").clicked() {
+                        if ActionButton::secondary(egui::Id::new("top.expand"), "展开黑板")
+                            .show(ui)
+                            .clicked()
+                        {
                             self.set_collapsed(ctx, false);
                         }
-                        if ui.button("退出").clicked() {
+                        if ActionButton::secondary(egui::Id::new("top.exit"), "退出")
+                            .show(ui)
+                            .clicked()
+                        {
                             self.request_close(ctx);
                         }
                     });
@@ -2511,15 +2618,17 @@ impl BoardApp {
                                     active,
                                     cfg!(windows),
                                 );
-                                let label = ui.add_enabled(
-                                    cfg!(windows),
-                                    egui::Button::new(if active {
+                                let label = ActionButton::secondary(
+                                    egui::Id::new("passthrough.toggle"),
+                                    if active {
                                         "退出鼠标穿透"
                                     } else {
                                         "鼠标穿透"
-                                    })
-                                    .selected(active),
-                                );
+                                    },
+                                )
+                                .selected(active)
+                                .enabled(cfg!(windows))
+                                .show(ui);
                                 if icon.clicked() || label.clicked() {
                                     self.set_mouse_passthrough(!active);
                                 }
@@ -2555,7 +2664,10 @@ impl BoardApp {
         } else {
             "收起画板工具"
         };
-        if ui.button(collapse).clicked() {
+        if ActionButton::secondary(egui::Id::new("menu.mgmt.collapse"), collapse)
+            .show(ui)
+            .clicked()
+        {
             self.set_collapsed(ui.ctx(), true);
             ui.close();
         }
@@ -2564,7 +2676,10 @@ impl BoardApp {
         } else {
             "退出画板"
         };
-        if ui.button(exit).clicked() {
+        if ActionButton::secondary(egui::Id::new("menu.mgmt.exit"), exit)
+            .show(ui)
+            .clicked()
+        {
             self.request_close(ui.ctx());
             ui.close();
         }
@@ -2573,12 +2688,18 @@ impl BoardApp {
     fn more_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("画笔", |ui| self.brush_menu(ui));
         ui.menu_button("其他形状", |ui| self.shape_menu(ui));
-        if ui.button("选择 / 顶点编辑").clicked() {
+        if ActionButton::secondary(egui::Id::new("menu.more.select"), "选择 / 顶点编辑")
+            .show(ui)
+            .clicked()
+        {
             self.tool = Tool::Select;
             ui.close();
         }
         ui.menu_button("橡皮", |ui| {
-            if ui.button("使用橡皮").clicked() {
+            if ActionButton::secondary(egui::Id::new("menu.eraser.use"), "使用橡皮")
+                .show(ui)
+                .clicked()
+            {
                 self.tool = Tool::Eraser;
                 ui.close();
             }
@@ -2586,15 +2707,17 @@ impl BoardApp {
         });
         ui.menu_button("文件 / 保存 / 载入 / 导出", |ui| self.file_menu(ui));
         ui.menu_button("数学 / 模型 / 截图 / AI", |ui| self.settings_menu(ui));
-        if ui
-            .add_enabled(self.session.history.can_undo(), egui::Button::new("撤销"))
+        if ActionButton::secondary(egui::Id::new("menu.more.undo"), "撤销")
+            .enabled(self.session.history.can_undo())
+            .show(ui)
             .clicked()
         {
             self.undo(false);
             ui.close();
         }
-        if ui
-            .add_enabled(self.session.history.can_redo(), egui::Button::new("重做"))
+        if ActionButton::secondary(egui::Id::new("menu.more.redo"), "重做")
+            .enabled(self.session.history.can_redo())
+            .show(ui)
             .clicked()
         {
             self.undo(true);
@@ -2604,7 +2727,14 @@ impl BoardApp {
             ui.label(&self.status);
             ui.label("仅覆盖当前窗口所在显示器；跨屏请先恢复画笔。");
             ui.label("模板识别32笔/8192点；交点16曲线，最多136次搜索，每次2048求值；宿主任务60秒请求取消。");
-            for (id, _) in self.jobs.clone() { if ui.button(format!("取消任务 {id}")).clicked() { self.cancel_job(&id); } }
+            for (id, _) in self.jobs.clone() {
+                if ActionButton::danger(egui::Id::new(("jobs.cancel", &id)), format!("取消任务 {id}"))
+                    .show(ui)
+                    .clicked()
+                {
+                    self.cancel_job(&id);
+                }
+            }
         });
     }
 
@@ -2953,12 +3083,13 @@ impl BoardApp {
 
     fn shape_menu(&mut self, ui: &mut egui::Ui) {
         for shape in SHAPES {
-            if ui
-                .selectable_label(
-                    self.tool == Tool::Shape && self.shape == *shape,
-                    shape_name(*shape),
-                )
-                .clicked()
+            if ActionButton::quiet(
+                egui::Id::new(("shape.pick", shape_name(*shape))),
+                shape_name(*shape),
+            )
+            .selected(self.tool == Tool::Shape && self.shape == *shape)
+            .show(ui)
+            .clicked()
             {
                 self.shape = *shape;
                 self.tool = Tool::Shape;
@@ -2966,19 +3097,18 @@ impl BoardApp {
             }
         }
         if self.mode == AppMode::Blackboard
-            && ui
-                .selectable_label(self.tool == Tool::Coordinates, "坐标系")
+            && ActionButton::quiet(egui::Id::new("shape.coordinates"), "坐标系")
+                .selected(self.tool == Tool::Coordinates)
+                .show(ui)
                 .clicked()
         {
             self.tool = Tool::Coordinates;
             ui.close();
         }
         ui.separator();
-        if ui
-            .add_enabled(
-                self.selected.is_some(),
-                egui::Button::new("断开所选直线的连接"),
-            )
+        if ActionButton::danger(egui::Id::new("shape.disconnect"), "断开所选直线的连接")
+            .enabled(self.selected.is_some())
+            .show(ui)
             .clicked()
             && let Some(id) = self.selected.clone()
         {
@@ -3193,17 +3323,29 @@ impl BoardApp {
             self.select_page(index);
             ui.close();
         }
-        if ui.button("清屏（可撤销）").clicked() {
+        if ActionButton::danger(egui::Id::new("menu.page.clear"), "清屏（可撤销）")
+            .show(ui)
+            .clicked()
+        {
             self.clear_current_page();
         }
     }
 
     fn file_menu(&mut self, ui: &mut egui::Ui) {
-        if ui.button("保存到当前路径").clicked() {
+        if ActionButton::primary(egui::Id::new("menu.file.save.current"), "保存到当前路径")
+            .show(ui)
+            .clicked()
+        {
             self.save();
             ui.close();
         }
-        if ui.button("文件面板：路径 / 载入 / 图片 / 导出").clicked() {
+        if ActionButton::secondary(
+            egui::Id::new("menu.file.panel"),
+            "文件面板：路径 / 载入 / 图片 / 导出",
+        )
+        .show(ui)
+        .clicked()
+        {
             self.files = !self.files;
             self.tool = Tool::Pen;
             ui.close();
@@ -3211,7 +3353,13 @@ impl BoardApp {
     }
 
     fn settings_menu(&mut self, ui: &mut egui::Ui) {
-        if self.mode == AppMode::Blackboard && ui.button("数学 / 手写识别 / 模型设置").clicked()
+        if self.mode == AppMode::Blackboard
+            && ActionButton::secondary(
+                egui::Id::new("menu.settings.math"),
+                "数学 / 手写识别 / 模型设置",
+            )
+            .show(ui)
+            .clicked()
         {
             self.math = !self.math;
             self.tool = Tool::Pen;
@@ -3230,10 +3378,13 @@ impl BoardApp {
             )
             .on_hover_text("默认隐藏；取消勾选会保留窗口和笔迹，它们可能进入截图。本次运行有效。");
         }
-        if ui.add_enabled(self.local_capture.is_none(), egui::Button::new("截图（本次授权）"))
+        if ActionButton::primary(egui::Id::new("capture.once"), "截图（本次授权）")
+            .enabled(self.local_capture.is_none())
+            .show(ui)
             .on_hover_text(if self.hosted {
                 "点击授权本次宿主框选，成功自动上板、不发送 Agent；仍须宿主允许截图且关闭课堂安全模式。"
-            } else { capture::LOCAL_HINT }).clicked()
+            } else { capture::LOCAL_HINT })
+            .clicked()
         {
             self.screenshot_clicked();
             ui.close();
@@ -3305,10 +3456,16 @@ impl BoardApp {
                         .on_hover_text("兼容旧版 JSON；图片随板书资源包保存。");
                     ui.text_edit_singleline(&mut self.path);
                     ui.horizontal(|ui| {
-                        if ui.button("保存").clicked() {
+                        if ActionButton::primary(egui::Id::new("files.save"), "保存")
+                            .show(ui)
+                            .clicked()
+                        {
                             self.save();
                         }
-                        if ui.button("载入").clicked() {
+                        if ActionButton::secondary(egui::Id::new("files.load"), "载入")
+                            .show(ui)
+                            .clicked()
+                        {
                             if self.session.history.is_dirty(&self.session.document)
                                 && !self.discard_load
                             {
@@ -3348,7 +3505,10 @@ impl BoardApp {
                     ui.label("PNG 图片路径")
                         .on_hover_text("只读取指定路径，不扫描文件；图片随板书保存。");
                     ui.text_edit_singleline(&mut self.image_path);
-                    if ui.button("导入图片").clicked() {
+                    if ActionButton::secondary(egui::Id::new("files.import.image"), "导入图片")
+                        .show(ui)
+                        .clicked()
+                    {
                         use std::io::Read;
                         let imported = (|| -> std::result::Result<String, String> {
                             let mut bytes = Vec::new();
@@ -3379,7 +3539,12 @@ impl BoardApp {
                         }
                     }
                     if self.captured_asset.is_some()
-                        && ui.button("将已返回截图插入当前页（不上传）").clicked()
+                        && ActionButton::secondary(
+                            egui::Id::new("files.insert.capture"),
+                            "将已返回截图插入当前页（不上传）",
+                        )
+                        .show(ui)
+                        .clicked()
                         && let Some(asset_ref) = self.captured_asset.take()
                         && let Some(resource) = self.session.resources.get(&asset_ref)
                     {
@@ -3396,10 +3561,16 @@ impl BoardApp {
                     ui.label("导出路径（当前页）").on_hover_text("不含工具条。");
                     ui.text_edit_singleline(&mut self.export_path);
                     ui.horizontal(|ui| {
-                        if ui.button("导出 SVG").clicked() {
+                        if ActionButton::secondary(egui::Id::new("files.export.svg"), "导出 SVG")
+                            .show(ui)
+                            .clicked()
+                        {
                             self.export(false);
                         }
-                        if ui.button("导出 PNG").clicked() {
+                        if ActionButton::secondary(egui::Id::new("files.export.png"), "导出 PNG")
+                            .show(ui)
+                            .clicked()
+                        {
                             self.export(true);
                         }
                     });
@@ -3440,10 +3611,28 @@ impl BoardApp {
                             }
                         });
                         ui.horizontal(|ui| {
-                            if ui.add_enabled(self.model_load_ready(), egui::Button::new("后台加载 / 重载模型")).clicked() {
+                            if ActionButton::primary(
+                                egui::Id::new("model.load"),
+                                "后台加载 / 重载模型",
+                            )
+                            .enabled(self.model_load_ready())
+                            .show(ui)
+                            .clicked()
+                            {
                                 self.load_model(ctx);
                             }
-                            if ui.add_enabled(self.neural_recognizer.is_some() || self.model_loader.busy() || !self.loaded_model_dir.is_empty(), egui::Button::new("卸载模型")).clicked() {
+                            if ActionButton::danger(
+                                egui::Id::new("model.unload"),
+                                "卸载模型",
+                            )
+                            .enabled(
+                                self.neural_recognizer.is_some()
+                                    || self.model_loader.busy()
+                                    || !self.loaded_model_dir.is_empty(),
+                            )
+                            .show(ui)
+                            .clicked()
+                            {
                                 self.unload_model();
                             }
                         });
@@ -3496,7 +3685,14 @@ impl BoardApp {
                             } else {
                                 format!("{}  相似度 {:.0}%", candidate.text, candidate.confidence * 100.0)
                             };
-                            if ui.selectable_label(self.expression == candidate.text, label).clicked() {
+                            if ActionButton::quiet(
+                                egui::Id::new(("hwr.candidate", &candidate.text, candidate.confidence.to_bits())),
+                                label,
+                            )
+                            .selected(self.expression == candidate.text)
+                            .show(ui)
+                            .clicked()
+                            {
                                 self.expression = candidate.text.clone();
                                 self.math_ticket = None;
                                 self.math_input = None;
@@ -3505,15 +3701,34 @@ impl BoardApp {
                             }
                         }
                     }
-                    if self.calculation.is_some() && ui.add_enabled(!self.ink_action_busy() && !self.expression.trim().is_empty(), egui::Button::new("确认纠错并计算写回 / 生成函数图像")).clicked() {
+                    if self.calculation.is_some()
+                        && ActionButton::primary(
+                            egui::Id::new("hwr.confirm"),
+                            "确认纠错并计算写回 / 生成函数图像",
+                        )
+                        .enabled(!self.ink_action_busy() && !self.expression.trim().is_empty())
+                        .show(ui)
+                        .clicked()
+                    {
                         self.confirm_calculation(ctx);
                     }
-                    if ui.button("取消候选 / 开始新表达式").clicked() { self.cancel_ink(); }
+                    if ActionButton::secondary(egui::Id::new("hwr.cancel.candidates"), "取消候选 / 开始新表达式")
+                        .show(ui)
+                        .clicked()
+                    {
+                        self.cancel_ink();
+                    }
                     ui.collapsing("学习个人符号模板（只在本机）", |ui| {
                         ui.label("启用识别，单独写一个 1–4 笔符号；停笔后填写正确符号。")
                             .on_hover_text("只学习个人符号模板，不训练通用手写模型。");
                         ui.text_edit_singleline(&mut self.template_label);
-                        if ui.button("学习当前候选笔迹").clicked() {
+                        if ActionButton::secondary(
+                            egui::Id::new("hwr.template.learn"),
+                            "学习当前候选笔迹",
+                        )
+                        .show(ui)
+                        .clicked()
+                        {
                             self.math_result = match self.calculation.as_ref() {
                                 Some(request) if request.context == ContextToken::capture(&self.session.document) => {
                                     match self.recognizer.register_template(self.template_label.trim(), &request.strokes) {
@@ -3528,12 +3743,26 @@ impl BoardApp {
                             .on_hover_text("仅使用指定路径，不自动扫描或加载。");
                         ui.text_edit_singleline(&mut self.template_path);
                         ui.horizontal(|ui| {
-                            if ui.add_enabled(!self.template_path.trim().is_empty(), egui::Button::new("保存模板到指定路径")).clicked() {
+                            if ActionButton::secondary(
+                                egui::Id::new("hwr.template.save"),
+                                "保存模板到指定路径",
+                            )
+                            .enabled(!self.template_path.trim().is_empty())
+                            .show(ui)
+                            .clicked()
+                            {
                                 self.math_result = self.recognizer.save(self.template_path.trim())
                                     .map(|()| format!("模板已保存：{}", self.template_path.trim()))
                                     .unwrap_or_else(|e| e.to_string());
                             }
-                            if ui.add_enabled(!self.template_path.trim().is_empty(), egui::Button::new("加载指定模板")).clicked() {
+                            if ActionButton::secondary(
+                                egui::Id::new("hwr.template.load"),
+                                "加载指定模板",
+                            )
+                            .enabled(!self.template_path.trim().is_empty())
+                            .show(ui)
+                            .clicked()
+                            {
                                 match InkRecognizer::load(self.template_path.trim()) {
                                     Ok(recognizer) => { self.cancel_ink(); self.expression.clear(); self.recognizer = recognizer; self.math_result = "已加载模板，将用于后续识别".into(); }
                                     Err(e) => self.math_result = e.to_string(),
@@ -3551,10 +3780,25 @@ impl BoardApp {
                     }) {
                         ui.label("所选手写答案的标准文字：");
                         ui.label(text);
-                        if ui.button("复制所选答案标准文字").clicked() { ui.ctx().copy_text(text.clone()); }
+                        if ActionButton::secondary(egui::Id::new("hwr.answer.copy"), "复制所选答案标准文字")
+                            .show(ui)
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(text.clone());
+                        }
                     }
                     if ui.text_edit_singleline(&mut self.expression).changed() { self.cancel_math(); self.hwr_worker.cancel(); }
-                    if self.math_worker.busy() && ui.button("取消后台计算（不写回）").clicked() { self.cancel_math(); self.math_result = "已取消；旧工作排空前不启动新任务".into(); }
+                    if self.math_worker.busy()
+                        && ActionButton::danger(
+                            egui::Id::new("hwr.cancel.calc"),
+                            "取消后台计算（不写回）",
+                        )
+                        .show(ui)
+                        .clicked()
+                    {
+                        self.cancel_math();
+                        self.math_result = "已取消；旧工作排空前不启动新任务".into();
+                    }
                     ui.label("方程组经结式消元在范围内完备求解，重合曲线单独提示。")
                         .on_hover_text("两式用英文分号分隔；每式仅支持总次数 ≤2 的 x/y 多项式。未找到候选不等于无解。");
                     ui.horizontal(|ui| {
@@ -3569,13 +3813,19 @@ impl BoardApp {
                     ui.horizontal(|ui| {
                         ui.label("数值微分点 x");
                         if ui.add(egui::DragValue::new(&mut self.derivative_at)).changed() { self.cancel_math(); }
-                        if ui.button("数值微分").clicked() {
+                        if ActionButton::secondary(egui::Id::new("math.derivative"), "数值微分")
+                            .show(ui)
+                            .clicked()
+                        {
                             let expression = self.expression.clone();
                             let at = self.derivative_at;
                             self.start_math(ctx, move || board_math::derivative(&expression, at)
                                 .map(|v| (format!("局部导数近似 ≈ {v}"), None)).map_err(|e| e.to_string()));
                         }
-                        if ui.button("数值定积分").clicked() {
+                        if ActionButton::secondary(egui::Id::new("math.integrate"), "数值定积分")
+                            .show(ui)
+                            .clicked()
+                        {
                             let expression = self.expression.clone();
                             let bounds = self.math_bounds;
                             self.start_math(ctx, move || board_math::integrate(&expression, bounds.x_min, bounds.x_max, Default::default())
@@ -3591,7 +3841,10 @@ impl BoardApp {
                     });
                     ui.horizontal(|ui| {
                         for label in ["计算", "化简", "解方程"] {
-                            if ui.button(label).clicked() {
+                            if ActionButton::primary(egui::Id::new(("math.run", label)), label)
+                                .show(ui)
+                                .clicked()
+                            {
                                 let expression = self.expression.clone();
                                 let bounds = self.math_bounds;
                                 self.start_math(ctx, move || {
@@ -3600,7 +3853,11 @@ impl BoardApp {
                                 });
                             }
                         }
-                        if ui.add_enabled(self.calculation.is_none(), egui::Button::new("绘制函数")).clicked() {
+                        if ActionButton::secondary(egui::Id::new("math.plot"), "绘制函数")
+                            .enabled(self.calculation.is_none())
+                            .show(ui)
+                            .clicked()
+                        {
                             match board_math::classify_plot(&self.expression) {
                                 Ok(board_math::PlotKind::Explicit(expression) | board_math::PlotKind::Implicit(expression)) => self.add(ObjectKind::FunctionPlot {
                                     position: Point { x: 100.0, y: 80.0 },
@@ -3617,7 +3874,13 @@ impl BoardApp {
                         }
                     });
                     ui.label(&self.math_result);
-                    if ui.add_enabled(self.calculation.is_none(), egui::Button::new("将手动输入计算后写到板上")).clicked()
+                    if ActionButton::primary(
+                        egui::Id::new("math.write"),
+                        "将手动输入计算后写到板上",
+                    )
+                    .enabled(self.calculation.is_none())
+                    .show(ui)
+                    .clicked()
                         && !self.expression.trim().is_empty()
                     {
                         let expression = self.expression.clone();
@@ -3631,7 +3894,8 @@ impl BoardApp {
                             Ok((result, Some(kind)))
                         });
                     }
-                    if ui.button("复原所选图像/坐标")
+                    if ActionButton::secondary(egui::Id::new("math.reset.plot"), "复原所选图像/坐标")
+                        .show(ui)
                         .on_hover_text("选择函数图后可滚轮缩放、拖动平移；复原恢复默认范围。")
                         .clicked()
                         && let Some(mut object) = self.selected_object()
@@ -3663,15 +3927,25 @@ impl BoardApp {
                     ui.label("退出将丢失未保存内容。请保存或明确选择丢弃。");
                     ui.text_edit_singleline(&mut self.path);
                     ui.horizontal(|ui| {
-                        if ui.button("保存并退出").clicked() && self.save() {
+                        if ActionButton::primary(egui::Id::new("exit.save"), "保存并退出")
+                            .show(ui)
+                            .clicked()
+                            && self.save()
+                        {
                             self.allow_close = true;
                             ctx.send_viewport_cmd(ViewportCommand::Close);
                         }
-                        if ui.button("丢弃并退出").clicked() {
+                        if ActionButton::danger(egui::Id::new("exit.discard"), "丢弃并退出")
+                            .show(ui)
+                            .clicked()
+                        {
                             self.allow_close = true;
                             ctx.send_viewport_cmd(ViewportCommand::Close);
                         }
-                        if ui.button("取消").clicked() {
+                        if ActionButton::secondary(egui::Id::new("exit.cancel"), "取消")
+                            .show(ui)
+                            .clicked()
+                        {
                             self.confirm_close = false;
                         }
                     });
@@ -3875,15 +4149,17 @@ impl BoardApp {
             if !permitted {
                 ui.label("宿主权限未允许，本次请求将拒绝。");
             }
-            if ui
-                .add_enabled(
-                    permitted
-                        && self.hosted
-                        && (capture || !self.agent_prompt.trim().is_empty())
-                        && (self.agent_image.is_none() || self.authorize_assets || capture),
-                    egui::Button::new("明确授权本次请求"),
-                )
-                .clicked()
+            let authorize_enabled = permitted
+                && self.hosted
+                && (capture || !self.agent_prompt.trim().is_empty())
+                && (self.agent_image.is_none() || self.authorize_assets || capture);
+            if ActionButton::primary(
+                egui::Id::new("agent.authorize"),
+                "明确授权本次请求",
+            )
+            .enabled(authorize_enabled)
+            .show(ui)
+            .clicked()
             {
                 self.request_host(capture);
             }
@@ -4147,7 +4423,10 @@ impl BoardApp {
                     .fixed_pos(bounds.right_top() + Vec2::new(6.0, -24.0))
                     .movable(false)
                     .show(ctx, |ui| {
-                        if ui.button("绘图").clicked() {
+                        if ActionButton::secondary(egui::Id::new("plot.create"), "绘图")
+                            .show(ui)
+                            .clicked()
+                        {
                             self.apply(vec![Operation::Add {
                                 object: features::plot(
                                     expression,
@@ -4175,7 +4454,10 @@ impl BoardApp {
                     .movable(false)
                     .show(ctx, |ui| {
                         ui.horizontal_wrapped(|ui| {
-                            if ui.button("复原").clicked() {
+                            if ActionButton::secondary(egui::Id::new("plot.legend.reset"), "复原")
+                                .show(ui)
+                                .clicked()
+                            {
                                 let mut reset = object.clone();
                                 if let ObjectKind::FunctionPlot {
                                     x_min,
@@ -4208,7 +4490,12 @@ impl BoardApp {
                                     .on_hover_text("拖出图框分离函数；拖动整个图到另一个图合并");
                             }
                             if expressions.len() > 1
-                                && ui.button("分离最后函数").clicked()
+                                && ActionButton::secondary(
+                                    egui::Id::new("plot.legend.split"),
+                                    "分离最后函数",
+                                )
+                                .show(ui)
+                                .clicked()
                                 && let Some(ops) = features::split_plot(
                                     &object,
                                     expressions.len() - 1,
@@ -5763,7 +6050,16 @@ impl eframe::App for BoardApp {
             // #region debug-point D:logic
             debug_incoming += u32::from(debug_logic_start.is_some());
             // #endregion
-            self.incoming_message(message);
+            // 动态取色属 UI 态：theme.seed 在帧上下文就地处理，不进文档会话。
+            if let Message::Request(request) = &message
+                && request.method == "theme.seed"
+            {
+                let request = request.clone();
+                let out = self.handle_theme_seed(ctx, request);
+                self.messages(out);
+            } else {
+                self.incoming_message(message);
+            }
         }
         // #region debug-point D:logic
         let debug_incoming_us = debug_ink::micros(debug_logic_start);
