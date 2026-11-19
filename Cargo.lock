@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "board-app"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "board-core",
  "board-hwr",
@@ -550,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "board-core"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde",
  "serde_json",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "board-hwr"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "board-core",
  "image",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "board-ink"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "board-core",
  "serde_json",
@@ -579,11 +579,11 @@ dependencies = [
 
 [[package]]
 name = "board-math"
-version = "0.1.14"
+version = "0.1.15"
 
 [[package]]
 name = "board-protocol"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde",
  "serde_json",
@@ -591,7 +591,7 @@ dependencies = [
 
 [[package]]
 name = "board-render"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "ab_glyph",
  "board-core",
@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "board-session"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "board-core",
  "board-math",
@@ -2330,7 +2330,7 @@ dependencies = [
 
 [[package]]
 name = "neo-blackboard"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "board-app",
  "serde_json",
@@ -2338,7 +2338,7 @@ dependencies = [
 
 [[package]]
 name = "neo-drawing"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "board-app",
  "serde_json",
