@@ -3,7 +3,8 @@
 fn neoui_theme_applies_to_both_slots_with_touch_sizing() {
     let ctx = egui::Context::default();
     super::apply_neoui_themes(&ctx);
-    // 深色槽（默认激活）：触摸间距 = Comfortable 基线 × 1.2（32→38.4、12→14.4）。
+    // 深色槽（默认激活）：触摸间距 = Comfortable 基线 × 1.2（32→38.4、10→12）。
+    // NeoUI 2026-11-19 更新：Comfortable button_padding (12,8)→(10,6)，命中高度不变。
     let dark = ctx.global_style();
     assert!(
         (dark.spacing.interact_size.y - 38.4).abs() < 0.01,
@@ -11,14 +12,14 @@ fn neoui_theme_applies_to_both_slots_with_touch_sizing() {
         dark.spacing.interact_size
     );
     assert!(
-        (dark.spacing.button_padding.x - 14.4).abs() < 0.01,
+        (dark.spacing.button_padding.x - 12.0).abs() < 0.01,
         "button_padding = {:?}",
         dark.spacing.button_padding
     );
     assert_eq!(
         dark.visuals.panel_fill,
-        egui::Color32::from_rgb(17, 23, 34),
-        "深色背景应是 NeoUI 品牌底色"
+        egui::Color32::from_rgb(18, 18, 18),
+        "深色背景应是 NeoUI Graphite 底色（2026-11-19 更新）"
     );
     // 浅色槽：同一触摸尺寸 + 浅色品牌背景。
     ctx.set_theme(egui::Theme::Light);
@@ -26,8 +27,8 @@ fn neoui_theme_applies_to_both_slots_with_touch_sizing() {
     assert!((light.spacing.interact_size.y - 38.4).abs() < 0.01);
     assert_eq!(
         light.visuals.panel_fill,
-        egui::Color32::from_rgb(244, 247, 252),
-        "浅色背景应是 NeoUI 品牌底色"
+        egui::Color32::from_rgb(245, 246, 247),
+        "浅色背景应是 NeoUI 更新后的底色（2026-11-19 更新）"
     );
     ctx.set_theme(egui::Theme::Dark);
 }

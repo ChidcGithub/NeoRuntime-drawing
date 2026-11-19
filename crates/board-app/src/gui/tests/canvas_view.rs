@@ -763,3 +763,34 @@ fn coordinate_system_axes_follow_pen_width_even_at_thinnest_pen() {
         other => panic!("期望坐标系：{other:?}"),
     }
 }
+
+// 纹理引用剪枝：删除图片对象立即释放纹理；撤销后同一路径重建（纯渲染缓存）。
+#[test]
+fn deleted_image_texture_is_pruned_and_restored_on_undo() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    let asset = app.session.resources.import_png(capture_png()).unwrap();
+    app.add(ObjectKind::Image {
+        position: Point { x: 30.0, y: 30.0 },
+        width: 40.0,
+        height: 40.0,
+        asset_ref: asset.clone(),
+    });
+    frame(&mut app, &ctx, egui::Vec2::new(600.0, 400.0), vec![], false);
+    assert_eq!(app.textures.len(), 1, "加载后应有一张纹理");
+    let id = app.session.document.current_page().objects[0].id.clone();
+    app.apply(vec![Operation::Delete { id }]);
+    frame(&mut app, &ctx, egui::Vec2::new(600.0, 400.0), vec![], false);
+    assert_eq!(
+        app.textures.len(),
+        0,
+        "删除后纹理应立即释放",
+    );
+    app.undo(false);
+    frame(&mut app, &ctx, egui::Vec2::new(600.0, 400.0), vec![], false);
+    assert_eq!(
+        app.textures.len(),
+        1,
+        "撤销后纹理应重建",
+    );
+}
